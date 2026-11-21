@@ -1,17 +1,15 @@
-English | [日本語](./README.ja.md)
-
 # swift-app-campaign
 
-Show the right thing to the right person inside your app, without shipping a new build: a campaign
-names one of your app's own screens (a placement), the values to fill it with, the event that
-triggers it, who it is for, how often, and who is held out for comparison. The device decides.
+Show the right thing to the right person inside your app without shipping a new build, with the decision made on the device.
+
+[Japanese](./README.ja.md)
 
 ![Swift](https://img.shields.io/badge/Swift-6.2-orange.svg)
 ![Platforms](https://img.shields.io/badge/Platforms-iOS%2017%20%7C%20macOS%2014-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-> Developed in a private monorepo and copied here one way. Issues are welcome; pull requests are
-> not accepted.
+A campaign names one of your app's own screens (a placement), the values to fill it with, the event
+that triggers it, who it is for, how often, and who is held out for comparison.
 
 ## Features
 
@@ -21,8 +19,8 @@ triggers it, who it is for, how often, and who is held out for comparison. The d
   it), `whats_new` and `cross_promo` come with their default placements and actions
   (`CampaignTemplate`)
 - **A pure decision with reasons.** `CampaignRules.decide` reads no clock, storage or network and
-  returns the campaign to show, or each campaign's reason not to: stale set → unusable → inactive →
-  no trigger → limits → device conditions → server conditions → holdout → priority → text and images
+  returns the campaign to show, or each campaign's reason not to: stale set, unusable, inactive,
+  no trigger, limits, device conditions, server conditions, holdout, priority, text and images
 - **Checked again after waiting.** A campaign waits while another full screen is up; then the set
   and the counts are read again, so a campaign stopped, paused or ended meanwhile is not shown
 - **Typed events.** Event values keep their types, so `count gte 3` matches `3`, and a number sent as
@@ -31,15 +29,25 @@ triggers it, who it is for, how often, and who is held out for comparison. The d
   (`hash32("<project>:<person>:<id>:holdout")`) and never changes once decided. Both sides record
   `campaign_eligible(side)`, so the two groups are comparable
 - **Fails closed.** A launch waits for its first fetch before deciding; offline, the set on hand is
-  used within `cache_hours` (72 by default), then nothing is shown. A broken set keeps the previous
-  one. An unknown placement, action, fact, operator, target or a wrong type skips that campaign and
-  is reported once as `campaign_rejected`
+  used within `cache_hours` (72 by default), then nothing is shown. An unreadable set keeps the
+  previous one. An unknown placement, action, fact, operator, target or a wrong type skips that
+  campaign and is reported once as `campaign_rejected`
 - **Measurement goes through your analytics.** The SDK hands `campaign_*`, `app_updated` and
   `link_opened` to a closure and never sends anything itself
-- **Works on its own.** `BundledCampaignSetFetcher` reads the set shipped in the app
-  (`app-growth campaigns bundle` writes it from your `campaigns/`). Any `CampaignSetFetching` can
-  fetch it from a server instead
+- **Works on its own.** `BundledCampaignSetFetcher` reads a set JSON shipped in the app bundle. Any
+  `CampaignSetFetching` can fetch it from elsewhere instead
 - **No dependencies.** Foundation and Observation; SwiftUI only in `CampaignSwiftUI`
+
+### Types
+
+| Type | Placement (kind) | Action | Notes |
+|---|---|---|---|
+| `trial_offer` | `CampaignTemplate.TrialOffer` (modal) | `.startTrial(_:)` | The app owns the card and the trial |
+| `review_ask` | `CampaignTemplate.ReviewAsk` (system) | `.requestReview(_:)` | Always `completed`; `max_per_app_version: 1` |
+| `whats_new` | `CampaignTemplate.WhatsNew` (modal) | a link or an app action | Triggered by `app_updated`, which the SDK records on the first launch of a newer version |
+| `cross_promo` | `CampaignTemplate.CrossPromo` (modal) | `.openStorePage(providerToken:open:)` | Opens the App Store page of the set's `targets[target]` and records `link_opened(kind=store_page)` |
+
+A `system` placement (`review_ask`) has no view: when it is shown, its action runs at once.
 
 ## Quick Start
 
@@ -51,7 +59,7 @@ import CampaignCore
 let campaigns = CampaignEngine(
     fetcher: BundledCampaignSetFetcher(resource: "campaigns"),   // the set shipped in the app
     context: CampaignContext(appVersion: version, build: build, channel: channel, lang: lang, region: region),
-    person: { people.personID },          // the person id `identify` answered (the install id until then)
+    person: { people.personID },          // a stable id for the person (the install id until you have one)
     isInternalDevice: { debug.isInternalDevice },
     placements: [CampaignTemplate.TrialOffer.self, CampaignTemplate.ReviewAsk.self],
     facts: [
@@ -82,8 +90,6 @@ campaigns.observe("paywall_closed", ["result": "continue_free", "source": "habit
 campaigns.observe("exchange_completed", ["count": 3])   // an Int, not "3"
 ```
 
-A `system` placement (`review_ask`) has no view: when it is shown, its action runs at once.
-
 Fire each event once in your analytics, and let the engine hear it as one more destination with the
 types intact (this package does not depend on any analytics package):
 
@@ -102,19 +108,24 @@ In your app's tests, check the registration against `campaigns/manifest.json`:
 try CampaignManifest.verify(campaigns.registry, against: manifestURL)
 ```
 
-### Types
+### Connecting to a server
 
-| Type | Placement (kind) | Action | Notes |
-|---|---|---|---|
-| `trial_offer` | `CampaignTemplate.TrialOffer` (modal) | `.startTrial(_:)` | The app owns the card and the trial |
-| `review_ask` | `CampaignTemplate.ReviewAsk` (system) | `.requestReview(_:)` | Always `completed`; `max_per_app_version: 1` |
-| `whats_new` | `CampaignTemplate.WhatsNew` (modal) | a link or an app action | Triggered by `app_updated`, which the SDK records on the first launch of a newer version |
-| `cross_promo` | `CampaignTemplate.CrossPromo` (modal) | `.openStorePage(providerToken:open:)` | Opens the App Store page of the set's `targets[target]` and records `link_opened(kind=store_page)` |
+The package works on its own. To connect it to a server, enable the matching trait of the connector package [swift-appgrowstack](https://github.com/appgrowstack/swift-appgrowstack) (SwiftPM traits) instead of wiring a server here.
+
+## Documentation
+
+The API reference is the symbol documentation in `Sources/CampaignCore`, `Sources/CampaignSwiftUI`
+and `Sources/CampaignTesting`. Open it in Xcode with Product > Build Documentation. Changes are
+listed in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Installation
 
 ```swift
 .package(url: "https://github.com/appgrowstack/swift-app-campaign.git", .upToNextMinor(from: "0.3.0"))
+```
+
+```swift
+.product(name: "CampaignSwiftUI", package: "swift-app-campaign")
 ```
 
 | Product | Contents | Depends on |
@@ -123,8 +134,6 @@ try CampaignManifest.verify(campaigns.registry, against: manifestURL)
 | `CampaignSwiftUI` | `.campaignPlacement(_:in:style:isBusy:content:)` | SwiftUI |
 | `CampaignTesting` | Fake fetcher, clock, storage, image prefetcher; event recorder | nothing |
 
-0.2.0 is not compatible with 0.1.0; see [CHANGELOG.md](CHANGELOG.md).
-
 ## Requirements
 
 - iOS 17.0+ / macOS 14.0+
@@ -132,4 +141,4 @@ try CampaignManifest.verify(campaigns.registry, against: manifestURL)
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](./LICENSE).
