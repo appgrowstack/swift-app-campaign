@@ -37,12 +37,11 @@ public final class CampaignEngine: CampaignEventObserving {
     @ObservationIgnored private let record: @Sendable (CampaignEvent) -> Void
     @ObservationIgnored private let texts: @Sendable (String) -> String?
     @ObservationIgnored private let clock: any CampaignClock
-    @ObservationIgnored private let images: any CampaignImagePrefetching
+    @ObservationIgnored private let imageCache: CampaignImageCache
     @ObservationIgnored private let launchedAt: Date
 
     @ObservationIgnored private var state: CampaignStoredState?
     @ObservationIgnored private var sessionShown = 0
-    @ObservationIgnored private var imagesReady: Set<URL> = []
     @ObservationIgnored private var waiting: Waiting?
     @ObservationIgnored private var preparing: Task<Void, Never>?
     @ObservationIgnored private var refreshing: Task<Void, Never>?
@@ -96,7 +95,7 @@ public final class CampaignEngine: CampaignEventObserving {
         self.texts = texts
         self.isBusy = isBusy
         self.clock = clock
-        self.images = images
+        self.imageCache = CampaignImageCache(images: images)
         self.launchedAt = clock.now
         self.registry = CampaignRegistry(
             placements: placements.map { CampaignPlacementSpec($0) },
@@ -176,7 +175,7 @@ public final class CampaignEngine: CampaignEventObserving {
         }
         self.state = state
         await storage.saveState(state)
-        if let fresh { await prefetchImages(of: fresh) }
+        if let fresh { await imageCache.prefetch(fresh) }
     }
 
     private func prepare() async {
@@ -187,33 +186,20 @@ public final class CampaignEngine: CampaignEventObserving {
             if let data = await storage.loadSet(), case .loaded(let loaded, _) = CampaignSetLoader.load(data, registry: registry) {
                 set = loaded
             }
-            var state = stored ?? CampaignStoredState(firstSeenAt: clock.now)
-            // The app's own first-launch date counts when it is earlier than the one stored here.
-            if let given = context.firstSeenAt, given < state.firstSeenAt { state.firstSeenAt = given }
-            let current = context.appVersion
-            if let last = state.lastAppVersion, let from = CampaignVersion(last), let to = CampaignVersion(current), to > from {
+            let start = CampaignLaunch.start(stored: stored, context: context, now: clock.now)
+            if let last = start.updatedFrom {
+                let current = context.appVersion
                 record(.appUpdated(from: last, to: current))
                 pendingUpdate = CampaignObservedEvent(name: "app_updated", props: [
                     "from_version": .string(last), "to_version": .string(current),
                 ])
             }
-            state.lastAppVersion = current
-            self.state = state
-            await storage.saveState(state)
-            if let set { await prefetchImages(of: set) }
+            self.state = start.state
+            await storage.saveState(start.state)
+            if let set { await imageCache.prefetch(set) }
         }
         preparing = task
         await task.value
-    }
-
-    private func prefetchImages(of set: CampaignSet) async {
-        for campaign in set.campaigns {
-            for value in campaign.values.values {
-                guard let image = CampaignImage(json: value), case .url(let url, _, _) = image,
-                      !imagesReady.contains(url) else { continue }
-                if await images.prefetch(url) { imagesReady.insert(url) }
-            }
-        }
     }
 
     // MARK: - Events
@@ -285,7 +271,7 @@ public final class CampaignEngine: CampaignEventObserving {
             daysSinceFirstSeen: Self.days(from: state.firstSeenAt, to: now, in: context.timeZone),
             sessionSeconds: max(0, Int(now.timeIntervalSince(launchedAt))),
             history: state.history, sessionShown: sessionShown, event: event, texts: texts,
-            imagesReady: imagesReady, sides: state.sides
+            imagesReady: imageCache.ready, sides: state.sides
         )
     }
 
