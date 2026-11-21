@@ -121,7 +121,7 @@ listed in [CHANGELOG.md](./CHANGELOG.md).
 ## Installation
 
 ```swift
-.package(url: "https://github.com/appgrowstack/swift-app-campaign.git", .upToNextMinor(from: "0.4.0"))
+.package(url: "https://github.com/appgrowstack/swift-app-campaign.git", .upToNextMinor(from: "0.5.0"))
 ```
 
 ```swift

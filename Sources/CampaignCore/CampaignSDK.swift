@@ -6,5 +6,5 @@ public enum CampaignSDK {
     /// The package name (`swift-app-campaign`).
     public static let name = "swift-app-campaign"
     /// The released version: the newest `## [x.y.z]` section of the CHANGELOG (a test checks it).
-    public static let version = "0.4.0"
+    public static let version = "0.5.0"
 }

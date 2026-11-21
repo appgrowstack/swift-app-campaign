@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-22
+
+No change to the library. The version follows kotlin-app-campaign 0.5.0, which now keeps the holdout
+side on the device as this package does.
+
+### Added
+
+- Shared cases `holdout-side-kept-held-out` and `holdout-side-kept-treatment` in the tests: a side,
+  once decided, stays when the set's holdout share changes.
+
 ## [0.4.0] - 2026-11-22
 
 ### Added
