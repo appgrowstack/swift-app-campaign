@@ -111,7 +111,7 @@ try CampaignManifest.verify(campaigns.registry, against: manifestURL)
 ## Installation
 
 ```swift
-.package(url: "https://github.com/no-problem-dev/swift-app-campaign.git", .upToNextMinor(from: "0.2.0"))
+.package(url: "https://github.com/appgrowstack/swift-app-campaign.git", .upToNextMinor(from: "0.2.0"))
 ```
 
 | Product | Contents | Depends on |

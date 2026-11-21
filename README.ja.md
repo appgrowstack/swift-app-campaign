@@ -45,7 +45,7 @@
 ## 導入
 
 ```swift
-.package(url: "https://github.com/no-problem-dev/swift-app-campaign.git", .upToNextMinor(from: "0.2.0"))
+.package(url: "https://github.com/appgrowstack/swift-app-campaign.git", .upToNextMinor(from: "0.2.0"))
 ```
 
 0.2.0は0.1.0と互換がありません。変わった所は[CHANGELOG.md](CHANGELOG.md)。
