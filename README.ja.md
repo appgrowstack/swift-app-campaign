@@ -20,6 +20,7 @@
 - **件ごとのholdoutを、両方の側で数える。** 側は人のid（`hash32("<project>:<person>:<id>:holdout")`）で決まり、一度決まったら変えません。どちらの側も`campaign_eligible(side)`を記録するので、2つの集まりを比べられます
 - **出さない側に倒れる。** 起動の直後は最初の取得を待ってから判定します。通信できないときは手元の組を`cache_hours`（既定72時間）まで使い、その後は何も出しません。読めない組が届いたら前の組を使います。知らないプレースメント・動き・値・演算子・紹介先や型のずれは、その件だけを飛ばし、`campaign_rejected`を1回だけ記録します
 - **計測はアプリの計測へ。** `campaign_*`・`app_updated`・`link_opened`をクロージャに渡すだけで、SDKは何も送りません
+- **単体で動く。** `BundledCampaignSetFetcher`がアプリに同梱した組を読みます。サーバーから取るのは`CampaignSetFetching`を満たす別の物です
 - **外部の依存は無し。** FoundationとObservationだけ。SwiftUIは`CampaignSwiftUI`の中だけです
 
 ## 使い方
@@ -27,7 +28,7 @@
 コードの例は[README.md](./README.md)のQuick Startと同じです。
 
 1. プレースメントを登録する。型の物は`CampaignTemplate`の物をそのまま使い、ほかは`CampaignPlacement`で書く（名前・値の型・`Values`）
-2. `CampaignEngine`に公開キー・端末の値・人のid（`identify`の答えの`person_id`。それまではinstall id。uidは渡さない）・本人の端末か（判定のたびに読む）・相手の値（端末の値を先に、サーバーの値は後に）・動き・計測の受け口を渡す
+2. `CampaignEngine`に組の出どころ（アプリに同梱した組は`BundledCampaignSetFetcher(resource: "campaigns")`。`app-growth campaigns bundle`がアプリの`campaigns/`から作る）・端末の値・人のid（`identify`の答えの`person_id`。それまではinstall id。uidは渡さない）・本人の端末か（判定のたびに読む）・相手の値（端末の値を先に、サーバーの値は後に）・動き・計測の受け口を渡す
 3. 起動と前面に戻ったときに`refresh()`を呼ぶ。起動の直後に届いた出来事は、この最初の取得を待ってから判定する
 4. 計測の出来事を`observe(_:_:)`にも型のまま流す（`[String: Any]`なら`CampaignValue(any:)`で読む）。`app_updated`はSDKが出すので流さない
 5. `.campaignPlacement(_:in:)`か`engine.presenting`で、自分の見た目で出す。主のボタンは`offer.tap`、閉じる操作は`offer.dismiss(_:)`。kindが`system`の物（`review_ask`）は見た目を持たず、出した時に動きがすぐ動く
@@ -45,7 +46,7 @@
 ## 導入
 
 ```swift
-.package(url: "https://github.com/appgrowstack/swift-app-campaign.git", .upToNextMinor(from: "0.2.0"))
+.package(url: "https://github.com/appgrowstack/swift-app-campaign.git", .upToNextMinor(from: "0.3.0"))
 ```
 
 0.2.0は0.1.0と互換がありません。変わった所は[CHANGELOG.md](CHANGELOG.md)。

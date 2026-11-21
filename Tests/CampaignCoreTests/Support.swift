@@ -139,7 +139,6 @@ final class Harness {
         let internalBox = self.internalDevice, personBox = self.person
         let reviews = reviews, opened = opened, links = links
         engine = CampaignEngine(
-            publicKey: "pk_test",
             fetcher: fetcher,
             storage: storage,
             context: CampaignContext(appVersion: appVersion, build: "330", channel: "appstore", lang: "ja", region: "JP",

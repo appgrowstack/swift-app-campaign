@@ -56,9 +56,8 @@ public final class CampaignEngine: CampaignEventObserving {
     }
 
     /// - Parameters:
-    ///   - publicKey: the project's public key (`pk_…`). Not a secret.
-    ///   - endpoint: where sets are fetched from (``HTTPCampaignSetFetcher/stagingEndpoint`` for debug builds).
-    ///   - fetcher: replaces the HTTP fetcher entirely (tests).
+    ///   - fetcher: where the set comes from: ``BundledCampaignSetFetcher`` for the set shipped in the
+    ///     app, or a connector that fetches it from a server.
     ///   - person: the person id (R2) — the `person_id` that `identify` answered, or the install id
     ///     until then. Never the uid: a side must not change when the person signs in.
     ///   - isInternalDevice: the owner's or a tester's device (always shown). Read on every decision.
@@ -66,9 +65,7 @@ public final class CampaignEngine: CampaignEventObserving {
     ///   - texts: the app's strings for `<text_key>.<value name>`; `nil` when there is none.
     ///   - record: receives every `campaign_*`, `app_updated` and `link_opened`, for the app's analytics.
     public init(
-        publicKey: String,
-        endpoint: URL = HTTPCampaignSetFetcher.defaultEndpoint,
-        fetcher: (any CampaignSetFetching)? = nil,
+        fetcher: any CampaignSetFetching,
         storage: any CampaignStorage = .applicationSupport,
         context: CampaignContext,
         person: @escaping @MainActor () -> String,
@@ -84,9 +81,7 @@ public final class CampaignEngine: CampaignEventObserving {
         clock: any CampaignClock = SystemCampaignClock(),
         images: any CampaignImagePrefetching = URLSessionImagePrefetcher()
     ) {
-        self.fetcher = fetcher ?? HTTPCampaignSetFetcher(
-            publicKey: publicKey, endpoint: endpoint,
-            client: CampaignSDK.client(platform: context.platform, appVersion: context.appVersion))
+        self.fetcher = fetcher
         self.storage = storage
         self.context = context
         self.person = person

@@ -116,42 +116,47 @@ public protocol CampaignSetFetching: Sendable {
     func fetch(etag: String?) async throws -> CampaignFetchResult
 }
 
-/// `GET <endpoint>/<public key>` with `If-None-Match` (ETag `"v<version>"`) and the
-/// `AppGrowStack-Client` header (``CampaignSDK/client(platform:appVersion:)``).
-public struct HTTPCampaignSetFetcher: CampaignSetFetching {
-    /// `https://api.appgrowstack.com/v1/campaigns/sets/`.
-    public static let defaultEndpoint = URL(string: "https://api.appgrowstack.com/v1/campaigns/sets/")!
-    /// `https://api-staging.appgrowstack.com/v1/campaigns/sets/` (debug builds).
-    public static let stagingEndpoint = URL(string: "https://api-staging.appgrowstack.com/v1/campaigns/sets/")!
+/// A fetch that got an answer other than a set or "not modified".
+public struct CampaignSetFetchFailure: Error, Equatable {
+    public let status: Int
+    public init(status: Int) { self.status = status }
+}
 
-    public struct Failure: Error, Equatable {
-        public let status: Int
-        public init(status: Int) { self.status = status }
+/// The set shipped in the app: a JSON file in the bundle (`app-growth campaigns bundle <project>
+/// --out <path>` writes it from the app's `campaigns/`). Works with no server. To change what is
+/// shown, ship a new build.
+public struct BundledCampaignSetFetcher: CampaignSetFetching {
+    public struct Missing: Error, Equatable {
+        public let resource: String
     }
 
-    public let url: URL
-    /// The `AppGrowStack-Client` header value.
-    public let client: String
-    private let session: URLSession
+    private let data: Data?
+    private let resource: String
 
-    /// - Parameter client: the `AppGrowStack-Client` header, from ``CampaignSDK/client(platform:appVersion:)``.
-    public init(publicKey: String, endpoint: URL = defaultEndpoint, client: String, session: URLSession = .shared) {
-        self.url = endpoint.appending(path: publicKey)
-        self.client = client
-        self.session = session
+    /// Reads `<resource>.json` from `bundle`.
+    public init(resource: String, bundle: Bundle = .main) {
+        self.resource = resource
+        data = bundle.url(forResource: resource, withExtension: "json").flatMap { try? Data(contentsOf: $0) }
     }
 
-    public func fetch(etag: String?) async throws -> CampaignFetchResult {
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
-        if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
-        request.setValue(client, forHTTPHeaderField: CampaignSDK.clientHeader)
-        let (data, response) = try await session.data(for: request)
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        switch status {
-        case 200: return .fetched(data, etag: (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "ETag"))
-        case 304: return .notModified
-        default: throw Failure(status: status)
+    /// A set given as JSON (tests, previews, or a file the app keeps elsewhere).
+    public init(data: Data) {
+        resource = "data"
+        self.data = data
+    }
+
+    /// `"bundled-<FNV-1a of the bytes>"`: the same file gives the same tag on every launch.
+    public var etag: String? {
+        data.map { bytes in
+            var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+            for byte in bytes { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3 }
+            return "\"bundled-\(String(hash, radix: 16))\""
         }
+    }
+
+    public func fetch(etag current: String?) async throws -> CampaignFetchResult {
+        guard let data else { throw Missing(resource: resource) }
+        return current == etag ? .notModified : .fetched(data, etag: etag)
     }
 }
 

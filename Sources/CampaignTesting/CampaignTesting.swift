@@ -29,7 +29,7 @@ public actor FakeCampaignSetFetcher: CampaignSetFetching {
         case .set(let data, let etag): return .fetched(data, etag: etag)
         case .notModified: return .notModified
         case .offline: throw Offline()
-        case .status(let status): throw HTTPCampaignSetFetcher.Failure(status: status)
+        case .status(let status): throw CampaignSetFetchFailure(status: status)
         }
     }
 }

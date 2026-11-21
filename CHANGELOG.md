@@ -9,14 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Fetching the set sends `AppGrowStack-Client: <platform>/<app_version>/swift-app-campaign/<version>`
-  (`ios/3.3.0/swift-app-campaign/0.2.0`), built from `CampaignContext` by the engine. It carries
-  nothing that identifies a person. `HTTPCampaignSetFetcher(publicKey:endpoint:client:session:)`
-  now takes the header value; build it with `CampaignSDK.client(platform:appVersion:)`.
+- **Breaking.** `CampaignEngine(fetcher:…)` takes where the set comes from and no longer takes a
+  public key or an endpoint.
 
 ### Added
 
-- `CampaignSDK.name` and `CampaignSDK.version`.
+- `BundledCampaignSetFetcher`: the set shipped in the app (`app-growth campaigns bundle`), with a
+  stable ETag so it is decoded once.
+- `CampaignSetFetchFailure(status:)` for fetchers that got neither a set nor "not modified".
+- `CampaignSDK.name` and `CampaignSDK.version`, for a connector to report when it fetches sets.
+
+### Removed
+
+- `HTTPCampaignSetFetcher`. Fetching from a server is a fetcher in a separate connector package.
 
 ## [0.2.0] - 2026-11-21
 

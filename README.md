@@ -36,6 +36,9 @@ triggers it, who it is for, how often, and who is held out for comparison. The d
   is reported once as `campaign_rejected`
 - **Measurement goes through your analytics.** The SDK hands `campaign_*`, `app_updated` and
   `link_opened` to a closure and never sends anything itself
+- **Works on its own.** `BundledCampaignSetFetcher` reads the set shipped in the app
+  (`app-growth campaigns bundle` writes it from your `campaigns/`). Any `CampaignSetFetching` can
+  fetch it from a server instead
 - **No dependencies.** Foundation and Observation; SwiftUI only in `CampaignSwiftUI`
 
 ## Quick Start
@@ -46,7 +49,7 @@ Build the engine with the placements, facts and actions your app registers:
 import CampaignCore
 
 let campaigns = CampaignEngine(
-    publicKey: "pk_…",
+    fetcher: BundledCampaignSetFetcher(resource: "campaigns"),   // the set shipped in the app
     context: CampaignContext(appVersion: version, build: build, channel: channel, lang: lang, region: region),
     person: { people.personID },          // the person id `identify` answered (the install id until then)
     isInternalDevice: { debug.isInternalDevice },
@@ -111,7 +114,7 @@ try CampaignManifest.verify(campaigns.registry, against: manifestURL)
 ## Installation
 
 ```swift
-.package(url: "https://github.com/appgrowstack/swift-app-campaign.git", .upToNextMinor(from: "0.2.0"))
+.package(url: "https://github.com/appgrowstack/swift-app-campaign.git", .upToNextMinor(from: "0.3.0"))
 ```
 
 | Product | Contents | Depends on |
