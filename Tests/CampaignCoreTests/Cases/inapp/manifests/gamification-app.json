@@ -263,5 +263,12 @@
   },
   "link_hosts": [
     "gohobishukan.com"
-  ]
+  ],
+  "voice": {
+    "banned_words": {
+      "ja": ["ポイント", "稼ぐ", "貯まる", "ゴールド", "もらえる", "貯金", "お小遣い", "還元"],
+      "en": ["points", "earn", "cash"],
+      "zh": ["积分", "積分"]
+    }
+  }
 }
