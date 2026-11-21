@@ -138,36 +138,45 @@ public final class CampaignEngine: CampaignEventObserving {
     }
 
     private func fetchOnce() async {
-        guard var state else { return }
+        guard let asked = state else { return }
         let result: CampaignFetchResult
         do {
-            result = try await fetcher.fetch(etag: set == nil ? nil : state.etag)
+            result = try await fetcher.fetch(etag: set == nil ? nil : asked.etag)
         } catch {
             return
         }
-        state = self.state ?? state
-        switch result {
-        case .notModified:
+        // Save the new set before reading the state: a decision can run during any await here (refresh on
+        // return to the foreground does not hold it), and its history must not be overwritten by an older copy.
+        // A set saved without its etag only costs one full fetch next time.
+        var read: CampaignSetLoader.Result?
+        if case .fetched(let data, _) = result {
+            let loaded = CampaignSetLoader.load(data, registry: registry)
+            if case .loaded = loaded { await storage.saveSet(data) }
+            read = loaded
+        }
+        guard var state = self.state else { return }
+        var fresh: CampaignSet?
+        switch (result, read) {
+        case (.notModified, _):
             guard set != nil else { return }
             state.fetchedAt = clock.now
-        case .fetched(let data, let etag):
-            switch CampaignSetLoader.load(data, registry: registry) {
-            case .unusable(let version, let reason):
-                report(.rejected("_set", version: version, reason: reason), into: &state)
-            case .loaded(let loaded, let rejections):
-                for rejection in rejections {
-                    report(.rejected(rejection.campaign, version: loaded.version, reason: rejection.reason), into: &state)
-                }
-                set = loaded
-                state.etag = etag
-                state.fetchedAt = clock.now
-                state.staleReportedVersion = nil
-                await storage.saveSet(data)
-                await prefetchImages(of: loaded)
+        case (.fetched(_, let etag), .loaded(let loaded, let rejections)?):
+            for rejection in rejections {
+                report(.rejected(rejection.campaign, version: loaded.version, reason: rejection.reason), into: &state)
             }
+            set = loaded
+            fresh = loaded
+            state.etag = etag
+            state.fetchedAt = clock.now
+            state.staleReportedVersion = nil
+        case (.fetched, .unusable(let version, let reason)?):
+            report(.rejected("_set", version: version, reason: reason), into: &state)
+        case (.fetched, nil):
+            return
         }
         self.state = state
         await storage.saveState(state)
+        if let fresh { await prefetchImages(of: fresh) }
     }
 
     private func prepare() async {
