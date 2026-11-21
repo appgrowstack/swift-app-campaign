@@ -76,7 +76,7 @@
           "values": {
             "headline": {
               "ja": "読んだ本も、残しませんか",
-              "en": "Keep a record of your books"
+              "en": "Log the books you read"
             },
             "body": {
               "ja": "読書メモリーは、読んだ本と気になった一文を写真で残せるアプリです。",
@@ -84,7 +84,7 @@
             },
             "primary_label": {
               "ja": "App Store で見る",
-              "en": "View on the App Store"
+              "en": "See on App Store"
             }
           },
           "text_key": "campaign.cross_promo_rm"
