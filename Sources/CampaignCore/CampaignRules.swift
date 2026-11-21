@@ -13,15 +13,20 @@ public enum CampaignOutcome: Sendable, Equatable, CustomStringConvertible {
     case lowerPriority
     case missingLocale
     case imageNotReady
+    /// The screen stayed busy longer than the trigger's `wait_seconds`.
+    case busy
+    /// The campaign left the set while it waited (C4).
+    case withdrawn
     case show
 
-    public enum Inactive: String, Sendable {
+    public enum Inactive: String, Sendable, CaseIterable {
         case status, platform, appVersion = "app_version", channel
         case notStarted = "not_started", ended
     }
 
-    public enum Limit: String, Sendable {
-        case maxShown = "max_shown", minHoursBetween = "min_hours_between"
+    public enum Limit: String, Sendable, CaseIterable {
+        case maxShown = "max_shown", maxPerAppVersion = "max_per_app_version"
+        case minHoursBetween = "min_hours_between"
         case afterDismiss = "after_dismiss", afterAction = "after_action"
         case maxPerSession = "max_per_session", maxPerDay = "max_per_day"
     }
@@ -39,11 +44,24 @@ public enum CampaignOutcome: Sendable, Equatable, CustomStringConvertible {
         case .lowerPriority: "lower_priority"
         case .missingLocale: "missing_locale"
         case .imageNotReady: "image_not_ready"
+        case .busy: "busy"
+        case .withdrawn: "withdrawn"
         case .show: "show"
         }
     }
 
     public var description: String { code }
+
+    init(_ reason: CampaignSkipReason) {
+        switch reason {
+        case .busy: self = .busy
+        case .lowerPriority: self = .lowerPriority
+        case .missingLocale: self = .missingLocale
+        case .imageNotReady: self = .imageNotReady
+        case .factUnavailable: self = .factUnavailable
+        case .withdrawn: self = .withdrawn
+        }
+    }
 }
 
 /// A value handed to a placement, after the language is picked.
@@ -72,31 +90,42 @@ public struct CampaignDecisionInput: Sendable {
     public var fetchedAt: Date
     public var now: Date
     public var context: CampaignContext
+    /// The owner's or a tester's device: always on the shown side, never remembered.
+    public var internalDevice: Bool
+    /// The person id (R2: the install id the person was first seen with). Decides the holdout side.
     public var person: String
     public var daysSinceFirstSeen: Int
+    /// Seconds since this launch (`session_seconds`).
+    public var sessionSeconds: Int
     public var history: CampaignHistory
     public var sessionShown: Int
-    public var event: CampaignTriggerEvent
+    public var event: CampaignObservedEvent
     /// The app's strings table: `<text_key>.<value name>` → text in the app's language.
     public var texts: @Sendable (String) -> String?
     public var imagesReady: Set<URL>
+    /// Sides already decided on this device. A side, once decided, does not change.
+    public var sides: [String: CampaignSide]
 
     public init(set: CampaignSet, registry: CampaignRegistry, fetchedAt: Date, now: Date, context: CampaignContext,
-                person: String, daysSinceFirstSeen: Int, history: CampaignHistory, sessionShown: Int,
-                event: CampaignTriggerEvent, texts: @escaping @Sendable (String) -> String? = { _ in nil },
-                imagesReady: Set<URL> = []) {
+                internalDevice: Bool = false, person: String, daysSinceFirstSeen: Int, sessionSeconds: Int = 0,
+                history: CampaignHistory, sessionShown: Int, event: CampaignObservedEvent,
+                texts: @escaping @Sendable (String) -> String? = { _ in nil },
+                imagesReady: Set<URL> = [], sides: [String: CampaignSide] = [:]) {
         self.set = set
         self.registry = registry
         self.fetchedAt = fetchedAt
         self.now = now
         self.context = context
+        self.internalDevice = internalDevice
         self.person = person
         self.daysSinceFirstSeen = daysSinceFirstSeen
+        self.sessionSeconds = sessionSeconds
         self.history = history
         self.sessionShown = sessionShown
         self.event = event
         self.texts = texts
         self.imagesReady = imagesReady
+        self.sides = sides
     }
 }
 
@@ -108,16 +137,31 @@ public struct CampaignDecision: Sendable {
         public let values: [String: CampaignResolvedValue]
     }
 
+    public struct Eligible: Sendable, Equatable {
+        public let campaign: String
+        public let trigger: String
+        public let side: CampaignSide
+    }
+
     /// The campaign to show, or `nil`.
     public var shown: Selection?
     /// Every campaign in the set that was looked at.
     public var outcomes: [String: CampaignOutcome]
-    /// Measurements this decision produced (held out, skipped, type mismatches, stale).
+    /// Measurements this decision produced (eligible, skipped, type mismatches, stale).
     public var records: [CampaignEvent]
     /// The server facts that were asked for, in order.
     public var serverFactsRead: [String]
-    /// Campaigns that were held out, with their trigger, so the caller can count them.
-    public var heldOut: [(campaign: String, trigger: String)]
+    /// Every campaign that passed step 8, with its side. Held-out ones count as shown.
+    public var eligible: [Eligible]
+}
+
+/// What the check after waiting (C4) found.
+public struct CampaignRecheck: Sendable {
+    /// `.show`, or why the campaign is no longer shown (`withdrawn`, `inactive:…`, `limited:…`, …).
+    public var outcome: CampaignOutcome
+    /// The campaign as it is in the set now, with its values, when it is still to be shown.
+    public var shown: CampaignDecision.Selection?
+    public var records: [CampaignEvent]
 }
 
 /// The decision, as one function: which campaign to show for an event, or why none.
@@ -126,10 +170,11 @@ public enum CampaignRules {
     ///   facts only for campaigns whose every device condition has passed, each name at most once.
     public static func decide(_ input: CampaignDecisionInput,
                               facts: @escaping @Sendable (String) async -> CampaignValue?) async -> CampaignDecision {
-        var decision = CampaignDecision(shown: nil, outcomes: [:], records: [], serverFactsRead: [], heldOut: [])
+        var decision = CampaignDecision(shown: nil, outcomes: [:], records: [], serverFactsRead: [], eligible: [])
         let set = input.set
         let version = set.version
 
+        // 1. The set is fresh enough.
         let age = input.now.timeIntervalSince(input.fetchedAt)
         if age > set.policy.cacheHours * 3600 {
             for campaign in set.campaigns { decision.outcomes[campaign.id] = .stale }
@@ -141,11 +186,13 @@ public enum CampaignRules {
         var candidates: [(Campaign, CampaignTrigger)] = []
 
         for campaign in set.campaigns {
+            // 3. Active for this build, now.
             if let inactive = inactive(campaign, input) {
                 decision.outcomes[campaign.id] = .inactive(inactive)
                 continue
             }
-            var props = Evaluator(props: input.event.properties, reader: nil)
+            // 4. The trigger.
+            var props = Evaluator(props: input.event.props, reader: nil)
             var matched: CampaignTrigger?
             for trigger in campaign.triggers where trigger.event == input.event.name {
                 if let condition = trigger.condition {
@@ -159,10 +206,12 @@ public enum CampaignRules {
                 decision.outcomes[campaign.id] = .noTrigger
                 continue
             }
+            // 5. Limits.
             if let limit = limit(campaign, input) {
                 decision.outcomes[campaign.id] = .limited(limit)
                 continue
             }
+            // 6–7. Device facts, then server facts.
             if let audience = campaign.audience {
                 var evaluator = Evaluator(props: [:], reader: reader)
                 var result = await evaluator.evaluate(audience, phase: .device)
@@ -178,32 +227,65 @@ public enum CampaignRules {
                     continue
                 }
             }
-            if !input.context.internalDevice,
-               CampaignHash.isHeldOut(project: set.project, person: input.person, campaign: campaign.id, share: campaign.holdout) {
+            // 8. Holdout. Both sides are recorded as eligible.
+            let side = side(of: campaign, input)
+            decision.records.append(.eligible(campaign.id, version: version, trigger: trigger.id, side: side))
+            decision.eligible.append(.init(campaign: campaign.id, trigger: trigger.id, side: side))
+            if side == .holdout {
                 decision.outcomes[campaign.id] = .heldOut
-                decision.records.append(.heldOut(campaign.id, version: version, trigger: trigger.id))
-                decision.heldOut.append((campaign.id, trigger.id))
                 continue
             }
             candidates.append((campaign, trigger))
         }
         decision.serverFactsRead = await reader.serverRead
 
+        // 9. Priority.
         candidates.sort { ranksBefore($0.0, $1.0) }
         guard let (winner, trigger) = candidates.first else { return decision }
         for (loser, loserTrigger) in candidates.dropFirst() {
             decision.outcomes[loser.id] = .lowerPriority
             decision.records.append(.skipped(loser.id, version: version, trigger: loserTrigger.id, reason: .lowerPriority))
         }
+        // 10. Text and images.
         switch resolveValues(winner, input) {
         case .success(let values):
             decision.outcomes[winner.id] = .show
             decision.shown = .init(campaign: winner, trigger: trigger.id, waitSeconds: trigger.waitSeconds, values: values)
         case .failure(let reason):
-            decision.outcomes[winner.id] = reason == .missingLocale ? .missingLocale : .imageNotReady
+            decision.outcomes[winner.id] = CampaignOutcome(reason)
             decision.records.append(.skipped(winner.id, version: version, trigger: trigger.id, reason: reason))
         }
         return decision
+    }
+
+    /// Step 11': after waiting for the screen, looks again at steps 3–5 with the set and counts the
+    /// device has now. A campaign no longer in the set is `withdrawn`, recorded with the new version.
+    public static func recheck(_ selection: CampaignDecision.Selection, _ input: CampaignDecisionInput) -> CampaignRecheck {
+        let id = selection.campaign.id
+        let version = input.set.version
+        guard let campaign = input.set.campaigns.first(where: { $0.id == id }) else {
+            return .init(outcome: .withdrawn, shown: nil,
+                         records: [.skipped(id, version: version, trigger: selection.trigger, reason: .withdrawn)])
+        }
+        if let inactive = inactive(campaign, input) { return .init(outcome: .inactive(inactive), shown: nil, records: []) }
+        if let limit = limit(campaign, input) { return .init(outcome: .limited(limit), shown: nil, records: []) }
+        switch resolveValues(campaign, input) {
+        case .success(let values):
+            let wait = campaign.triggers.first { $0.id == selection.trigger }?.waitSeconds ?? selection.waitSeconds
+            return .init(outcome: .show, shown: .init(campaign: campaign, trigger: selection.trigger, waitSeconds: wait, values: values), records: [])
+        case .failure(let reason):
+            return .init(outcome: CampaignOutcome(reason), shown: nil,
+                         records: [.skipped(id, version: version, trigger: selection.trigger, reason: reason)])
+        }
+    }
+
+    /// The side of a campaign's holdout: the owner's device is always shown; a side decided earlier
+    /// stays; otherwise `hash32("<project>:<person>:<campaign>:holdout") / 2^32 < holdout`.
+    static func side(of campaign: Campaign, _ input: CampaignDecisionInput) -> CampaignSide {
+        if input.internalDevice { return .treatment }
+        if let side = input.sides[campaign.id] { return side }
+        return CampaignHash.side(project: input.set.project, person: input.person, campaign: campaign.id,
+                                 holdout: campaign.holdout, internalDevice: false)
     }
 
     /// `priority` high first, then the newer `starts_at` (none counts as oldest), then the id.
@@ -232,6 +314,8 @@ public enum CampaignRules {
         let limits = campaign.limits
         let now = input.now
         if record.shownCount >= limits.maxShown { return .maxShown }
+        if let perVersion = limits.maxPerAppVersion,
+           record.shownByAppVersion[input.context.appVersion, default: 0] >= perVersion { return .maxPerAppVersion }
         if let last = record.lastShownAt, now.timeIntervalSince(last) < limits.minHoursBetween * 3600 { return .minHoursBetween }
         if let dismissed = record.dismissedAt, now.timeIntervalSince(dismissed) < limits.afterDismissDays * 86400 { return .afterDismiss }
         if let completed = record.actionCompletedAt {
@@ -320,6 +404,7 @@ private actor FactReader {
         case "lang": return .string(context.lang)
         case "region": return .string(context.region)
         case "days_since_first_seen": return .int(input.daysSinceFirstSeen)
+        case "session_seconds": return .int(input.sessionSeconds)
         default: return nil
         }
     }

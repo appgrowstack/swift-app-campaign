@@ -9,7 +9,7 @@ public struct CampaignPresentation: Sendable, Identifiable, Equatable {
     public let placement: String
     /// Text already in the device's language.
     public let values: [String: CampaignResolvedValue]
-    let event: CampaignTriggerEvent
+    let event: CampaignObservedEvent
     let onTap: CampaignTap
 
     public static func == (lhs: Self, rhs: Self) -> Bool { lhs.id == rhs.id }

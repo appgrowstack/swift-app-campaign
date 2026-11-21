@@ -61,6 +61,35 @@ public enum CampaignValue: Sendable, Hashable, Codable, CustomStringConvertible 
     }
 }
 
+extension CampaignValue {
+    /// A value from an analytics client that keeps `[String: Any]`: `Bool`, integers, `Double`,
+    /// `Float`, `String`, or an `NSNumber` read by its real type. `nil` for anything else (leave it out).
+    public init?(any value: Any) {
+        if let number = value as? NSNumber, !(value is String) {
+            if CFGetTypeID(number) == CFBooleanGetTypeID() {
+                self = .bool(number.boolValue)
+                return
+            }
+            switch String(cString: number.objCType) {
+            case "f", "d": self = .double(number.doubleValue)
+            default: self = .int(number.intValue)
+            }
+            return
+        }
+        switch value {
+        case let value as CampaignValue: self = value
+        case let value as Bool: self = .bool(value)
+        case let value as Int: self = .int(value)
+        case let value as Int64: self = .int(Int(value))
+        case let value as Int32: self = .int(Int(value))
+        case let value as Double: self = .double(value)
+        case let value as Float: self = .double(Double(value))
+        case let value as String: self = .string(value)
+        default: return nil
+        }
+    }
+}
+
 extension CampaignValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral,
     ExpressibleByFloatLiteral, ExpressibleByBooleanLiteral {
     public init(stringLiteral value: String) { self = .string(value) }

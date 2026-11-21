@@ -3,10 +3,19 @@ import Observation
 
 /// Fetches the set, hears events, decides, waits until the screen is free, and hands the app a
 /// presentation. Everything it measures goes to `record`; it never sends anything itself.
+///
+/// - Events that arrive before this launch's first fetch has finished wait for it, so a launch
+///   never decides with an old set while a newer one is on its way. When the fetch fails, the set
+///   on hand is used while it is younger than the set's `cache_hours`.
+/// - After waiting for the screen, the campaign is checked again against the set and counts the
+///   device has then (stopped, paused, ended or over a limit: not shown).
+/// - The first launch of a newer app version records `app_updated` and decides it as an event
+///   (`whats_new`). Do not pass `app_updated` from the app; it is ignored.
 @MainActor
 @Observable
 public final class CampaignEngine: CampaignEventObserving {
     /// The campaign to show now. The app presents its own placement while this is set.
+    /// `system` placements never appear here: their action runs at once.
     public private(set) var presenting: CampaignPresentation?
     public var isPresenting: Bool { presenting != nil }
     /// `true` while the app has another full screen up (paywall, onboarding, a celebration…).
@@ -20,6 +29,7 @@ public final class CampaignEngine: CampaignEventObserving {
     @ObservationIgnored private let storage: any CampaignStorage
     @ObservationIgnored private let context: CampaignContext
     @ObservationIgnored private let person: @MainActor () -> String
+    @ObservationIgnored private let isInternalDevice: @MainActor () -> Bool
     @ObservationIgnored private let facts: [String: CampaignFact]
     @ObservationIgnored private let actions: [String: CampaignAction]
     @ObservationIgnored private let decoders: [String: @Sendable (CampaignPresentation) -> Bool]
@@ -28,12 +38,16 @@ public final class CampaignEngine: CampaignEventObserving {
     @ObservationIgnored private let texts: @Sendable (String) -> String?
     @ObservationIgnored private let clock: any CampaignClock
     @ObservationIgnored private let images: any CampaignImagePrefetching
+    @ObservationIgnored private let launchedAt: Date
 
     @ObservationIgnored private var state: CampaignStoredState?
     @ObservationIgnored private var sessionShown = 0
     @ObservationIgnored private var imagesReady: Set<URL> = []
     @ObservationIgnored private var waiting: Waiting?
     @ObservationIgnored private var preparing: Task<Void, Never>?
+    @ObservationIgnored private var refreshing: Task<Void, Never>?
+    @ObservationIgnored private var launchFetch: Task<Void, Never>?
+    @ObservationIgnored private var pendingUpdate: CampaignObservedEvent?
 
     private struct Waiting {
         let token: UUID
@@ -42,20 +56,23 @@ public final class CampaignEngine: CampaignEventObserving {
     }
 
     /// - Parameters:
-    ///   - projectKey: the project's public key (`pk_…`). Not a secret.
-    ///   - endpoint: where sets are fetched from; replace it for staging and tests.
+    ///   - publicKey: the project's public key (`pk_…`). Not a secret.
+    ///   - endpoint: where sets are fetched from (``HTTPCampaignSetFetcher/stagingEndpoint`` for debug builds).
     ///   - fetcher: replaces the HTTP fetcher entirely (tests).
-    ///   - person: the signed-in uid, or an install id. Decides the holdout side.
+    ///   - person: the person id (R2) — the `person_id` that `identify` answered, or the install id
+    ///     until then. Never the uid: a side must not change when the person signs in.
+    ///   - isInternalDevice: the owner's or a tester's device (always shown). Read on every decision.
     ///   - facts: cheap device facts first; conditions are read in the order they are written.
     ///   - texts: the app's strings for `<text_key>.<value name>`; `nil` when there is none.
-    ///   - record: receives every `campaign_*` measurement, for the app's analytics.
+    ///   - record: receives every `campaign_*`, `app_updated` and `link_opened`, for the app's analytics.
     public init(
-        projectKey: String,
+        publicKey: String,
         endpoint: URL = HTTPCampaignSetFetcher.defaultEndpoint,
         fetcher: (any CampaignSetFetching)? = nil,
         storage: any CampaignStorage = .applicationSupport,
         context: CampaignContext,
         person: @escaping @MainActor () -> String,
+        isInternalDevice: @escaping @MainActor () -> Bool = { false },
         placements: [any CampaignPlacement.Type],
         facts: [CampaignFact] = [],
         actions: [CampaignAction] = [],
@@ -67,10 +84,11 @@ public final class CampaignEngine: CampaignEventObserving {
         clock: any CampaignClock = SystemCampaignClock(),
         images: any CampaignImagePrefetching = URLSessionImagePrefetcher()
     ) {
-        self.fetcher = fetcher ?? HTTPCampaignSetFetcher(projectKey: projectKey, endpoint: endpoint)
+        self.fetcher = fetcher ?? HTTPCampaignSetFetcher(publicKey: publicKey, endpoint: endpoint)
         self.storage = storage
         self.context = context
         self.person = person
+        self.isInternalDevice = isInternalDevice
         self.facts = Dictionary(facts.map { ($0.name, $0) }, uniquingKeysWith: { _, last in last })
         self.actions = Dictionary(actions.map { ($0.name, $0) }, uniquingKeysWith: { _, last in last })
         self.decoders = Dictionary(placements.map { ($0.name, Self.decoder(for: $0)) }, uniquingKeysWith: { _, last in last })
@@ -80,6 +98,7 @@ public final class CampaignEngine: CampaignEventObserving {
         self.isBusy = isBusy
         self.clock = clock
         self.images = images
+        self.launchedAt = clock.now
         self.registry = CampaignRegistry(
             placements: placements.map { CampaignPlacementSpec($0) },
             actions: Dictionary(actions.map { ($0.name, $0.arguments) }, uniquingKeysWith: { _, last in last }),
@@ -103,9 +122,23 @@ public final class CampaignEngine: CampaignEventObserving {
 
     // MARK: - Fetching
 
-    /// Fetches the set. Call at launch and on return to the foreground. Failures keep the set on hand.
+    /// Fetches the set. Call at launch and on return to the foreground. Failures keep the set on
+    /// hand. Calls made while a fetch runs wait for that fetch.
     public func refresh() async {
         await prepare()
+        if let refreshing { return await refreshing.value }
+        let task = Task { @MainActor in await self.fetchOnce() }
+        refreshing = task
+        if launchFetch == nil { launchFetch = task }
+        await task.value
+        refreshing = nil
+        if let update = pendingUpdate {
+            pendingUpdate = nil
+            Task { @MainActor in await self.decide(update) }
+        }
+    }
+
+    private func fetchOnce() async {
         guard var state else { return }
         let result: CampaignFetchResult
         do {
@@ -113,6 +146,7 @@ public final class CampaignEngine: CampaignEventObserving {
         } catch {
             return
         }
+        state = self.state ?? state
         switch result {
         case .notModified:
             guard set != nil else { return }
@@ -145,8 +179,17 @@ public final class CampaignEngine: CampaignEventObserving {
             if let data = await storage.loadSet(), case .loaded(let loaded, _) = CampaignSetLoader.load(data, registry: registry) {
                 set = loaded
             }
-            state = stored ?? CampaignStoredState(firstSeenAt: clock.now)
-            if stored == nil, let state { await storage.saveState(state) }
+            var state = stored ?? CampaignStoredState(firstSeenAt: clock.now)
+            let current = context.appVersion
+            if let last = state.lastAppVersion, let from = CampaignVersion(last), let to = CampaignVersion(current), to > from {
+                record(.appUpdated(from: last, to: current))
+                pendingUpdate = CampaignObservedEvent(name: "app_updated", props: [
+                    "from_version": .string(last), "to_version": .string(current),
+                ])
+            }
+            state.lastAppVersion = current
+            self.state = state
+            await storage.saveState(state)
             if let set { await prefetchImages(of: set) }
         }
         preparing = task
@@ -165,29 +208,36 @@ public final class CampaignEngine: CampaignEventObserving {
 
     // MARK: - Events
 
-    public nonisolated func observe(_ name: String, _ properties: [String: CampaignValue]) {
-        let event = CampaignTriggerEvent(name: name, properties: properties)
+    public nonisolated func observe(_ name: String, _ props: [String: CampaignValue]) {
+        let event = CampaignObservedEvent(name: name, props: props)
         Task { @MainActor in await self.receive(event) }
     }
 
     /// The same as ``observe(_:_:)``, awaited: returns after the campaign was shown or skipped.
-    public func receive(_ event: CampaignTriggerEvent) async {
-        guard !event.name.hasPrefix("campaign") else { return }
+    public func receive(_ event: CampaignObservedEvent) async {
+        guard Self.accepts(event.name) else { return }
         await prepare()
-        guard var state, let set, let fetchedAt = state.fetchedAt else { return }
+        if let launchFetch { await launchFetch.value } else { await refresh() }
+        await decide(event)
+    }
 
+    /// `campaign_*` are the SDK's own; `app_updated` comes from the SDK itself.
+    nonisolated static func accepts(_ name: String) -> Bool {
+        !name.hasPrefix("campaign") && name != "app_updated"
+    }
+
+    private func decide(_ event: CampaignObservedEvent) async {
+        guard let state, let set, state.fetchedAt != nil else { return }
         let now = clock.now
-        let input = CampaignDecisionInput(
-            set: set, registry: registry, fetchedAt: fetchedAt, now: now, context: context,
-            person: person(), daysSinceFirstSeen: Self.days(from: state.firstSeenAt, to: now, in: context.timeZone),
-            history: state.history, sessionShown: sessionShown, event: event, texts: texts, imagesReady: imagesReady
-        )
+        let internalDevice = isInternalDevice()
+        let input = makeInput(set: set, state: state, now: now, event: event, internalDevice: internalDevice)
         let facts = self.facts
         let decision = await CampaignRules.decide(input) { name in
             guard let fact = facts[name] else { return nil }
             return try? await fact.read()
         }
 
+        guard var state = self.state else { return }
         for event in decision.records {
             if event.name == "campaigns_stale" {
                 guard state.staleReportedVersion != set.version else { continue }
@@ -197,15 +247,29 @@ public final class CampaignEngine: CampaignEventObserving {
                 report(event, into: &state)
             }
         }
-        for held in decision.heldOut {
-            state.history.campaigns[held.campaign, default: CampaignRecord()].shownCount += 1
-            state.history.campaigns[held.campaign, default: CampaignRecord()].lastShownAt = now
+        for eligible in decision.eligible {
+            if !internalDevice, state.sides[eligible.campaign] == nil { state.sides[eligible.campaign] = eligible.side }
+            if eligible.side == .holdout {
+                state.history.campaigns[eligible.campaign, default: CampaignRecord()].count(at: now, appVersion: context.appVersion)
+            }
         }
         self.state = state
         await storage.saveState(state)
 
         guard let selection = decision.shown else { return }
-        await waitAndShow(selection, event: event, setVersion: set.version)
+        await waitAndShow(selection, event: event)
+    }
+
+    private func makeInput(set: CampaignSet, state: CampaignStoredState, now: Date, event: CampaignObservedEvent,
+                           internalDevice: Bool) -> CampaignDecisionInput {
+        CampaignDecisionInput(
+            set: set, registry: registry, fetchedAt: state.fetchedAt ?? .distantPast, now: now, context: context,
+            internalDevice: internalDevice, person: person(),
+            daysSinceFirstSeen: Self.days(from: state.firstSeenAt, to: now, in: context.timeZone),
+            sessionSeconds: max(0, Int(now.timeIntervalSince(launchedAt))),
+            history: state.history, sessionShown: sessionShown, event: event, texts: texts,
+            imagesReady: imagesReady, sides: state.sides
+        )
     }
 
     /// Sends `campaign_rejected` once per campaign, set version and reason; everything else as is.
@@ -217,13 +281,14 @@ public final class CampaignEngine: CampaignEventObserving {
         record(event)
     }
 
-    private func waitAndShow(_ selection: CampaignDecision.Selection, event: CampaignTriggerEvent, setVersion: Int) async {
+    private func waitAndShow(_ selection: CampaignDecision.Selection, event: CampaignObservedEvent) async {
         let campaign = selection.campaign
         if let current = waiting {
+            let version = set?.version ?? 0
             if CampaignRules.ranksBefore(campaign, current.campaign) {
-                record(.skipped(current.campaign.id, version: setVersion, trigger: current.trigger, reason: .lowerPriority))
+                record(.skipped(current.campaign.id, version: version, trigger: current.trigger, reason: .lowerPriority))
             } else {
-                record(.skipped(campaign.id, version: setVersion, trigger: selection.trigger, reason: .lowerPriority))
+                record(.skipped(campaign.id, version: version, trigger: selection.trigger, reason: .lowerPriority))
                 return
             }
         }
@@ -234,7 +299,7 @@ public final class CampaignEngine: CampaignEventObserving {
             if clock.now >= deadline {
                 if waiting?.token == token {
                     waiting = nil
-                    record(.skipped(campaign.id, version: setVersion, trigger: selection.trigger, reason: .busy))
+                    record(.skipped(campaign.id, version: set?.version ?? 0, trigger: selection.trigger, reason: .busy))
                 }
                 return
             }
@@ -243,12 +308,25 @@ public final class CampaignEngine: CampaignEventObserving {
         }
         guard waiting?.token == token else { return }
         waiting = nil
-        guard var state, sessionShown < (set?.policy.maxPerSession ?? 1) else { return }
 
+        // C4: the set and the counts may have changed while waiting.
+        guard let set, let state else { return }
+        let recheck = CampaignRules.recheck(selection, makeInput(
+            set: set, state: state, now: clock.now, event: event, internalDevice: isInternalDevice()
+        ))
+        recheck.records.forEach(record)
+        guard let shown = recheck.shown else { return }
+        await show(shown, setVersion: set.version, event: event)
+    }
+
+    private func show(_ selection: CampaignDecision.Selection, setVersion: Int, event: CampaignObservedEvent) async {
+        let campaign = selection.campaign
+        let kind = registry.placements[campaign.placement]?.kind ?? .modal
         let presentation = CampaignPresentation(
             id: UUID(), campaign: campaign.id, setVersion: setVersion, trigger: selection.trigger,
             placement: campaign.placement, values: selection.values, event: event, onTap: campaign.onTap
         )
+        guard var state else { return }
         if let decodes = decoders[campaign.placement], !decodes(presentation) {
             report(.rejected(campaign.id, version: setVersion, reason: .typeMismatch), into: &state)
             self.state = state
@@ -257,10 +335,9 @@ public final class CampaignEngine: CampaignEventObserving {
         }
 
         let now = clock.now
-        presenting = presentation
+        if kind == .modal { presenting = presentation }
         sessionShown += 1
-        state.history.campaigns[campaign.id, default: CampaignRecord()].shownCount += 1
-        state.history.campaigns[campaign.id, default: CampaignRecord()].lastShownAt = now
+        state.history.campaigns[campaign.id, default: CampaignRecord()].count(at: now, appVersion: context.appVersion)
         state.history.shownAt = state.history.shownAt.filter { now.timeIntervalSince($0) < 2 * 86400 } + [now]
         record(.init(name: "campaign_shown", parameters: [
             "campaign": .string(campaign.id), "set_version": .int(setVersion),
@@ -268,6 +345,7 @@ public final class CampaignEngine: CampaignEventObserving {
         ]))
         self.state = state
         await storage.saveState(state)
+        if kind == .system { await complete(presentation, tapped: false) }
     }
 
     // MARK: - Taps
@@ -276,25 +354,32 @@ public final class CampaignEngine: CampaignEventObserving {
     public func tap(_ presentation: CampaignPresentation) async {
         guard presenting?.id == presentation.id else { return }
         presenting = nil
+        await complete(presentation, tapped: true)
+    }
+
+    /// Runs the campaign's `on_tap`: after a tap, or at once for a `system` placement (no `campaign_tapped`).
+    private func complete(_ presentation: CampaignPresentation, tapped: Bool) async {
         let base: [String: CampaignValue] = [
             "campaign": .string(presentation.campaign), "set_version": .int(presentation.setVersion),
             "trigger": .string(presentation.trigger),
         ]
         let actionName: String
         let result: CampaignActionResult
+        var target: CampaignTarget?
         switch presentation.onTap {
         case .link(let url):
-            record(.init(name: "campaign_tapped", parameters: base.merging(["target": "link"]) { $1 }))
+            if tapped { record(.init(name: "campaign_tapped", parameters: base.merging(["target": "link"]) { $1 })) }
             link(url)
             actionName = "link"
             result = .completed
         case .action(let name, let arguments):
-            record(.init(name: "campaign_tapped", parameters: base.merging(["target": "action"]) { $1 }))
+            if tapped { record(.init(name: "campaign_tapped", parameters: base.merging(["target": "action"]) { $1 })) }
             actionName = name
+            if case .string(let id)? = arguments["target"] { target = set?.targets[id] }
             if let action = actions[name] {
                 result = await action.run(CampaignActionRequest(
                     campaign: presentation.campaign, setVersion: presentation.setVersion,
-                    trigger: presentation.trigger, event: presentation.event, arguments: arguments
+                    trigger: presentation.trigger, event: presentation.event, arguments: arguments, target: target
                 ))
             } else {
                 result = .failed
@@ -303,7 +388,13 @@ public final class CampaignEngine: CampaignEventObserving {
         record(.init(name: "campaign_action_completed", parameters: base.merging([
             "action": .string(actionName), "result": .string(result.rawValue),
         ]) { $1 }))
-        guard result == .completed, var state else { return }
+        guard result == .completed else { return }
+        if actionName == CampaignAction.openStorePageName, let target {
+            record(.init(name: "link_opened", parameters: [
+                "kind": "store_page", "target": .string(target.id), "campaign": .string(presentation.campaign),
+            ]))
+        }
+        guard var state else { return }
         state.history.campaigns[presentation.campaign, default: CampaignRecord()].actionCompletedAt = clock.now
         self.state = state
         await storage.saveState(state)
@@ -336,23 +427,27 @@ public final class CampaignEngine: CampaignEventObserving {
 
     // MARK: - Debug
 
-    /// Shows one campaign of the set at once, ignoring its triggers, audience, limits and holdout.
-    /// For the debug screen. Measurements still go to `record` (the app's `debug` channel keeps
-    /// them out of the numbers). Returns `false` when its text or image is not ready.
+    /// Shows one campaign of the set at once, ignoring its triggers, audience, limits and holdout
+    /// (a `system` placement runs its action). For the debug screen. Measurements still go to
+    /// `record` (the app's `debug` channel keeps them out of the numbers). Returns `false` when its
+    /// text or image is not ready.
     @discardableResult
     public func presentForDebug(campaign id: String) async -> Bool {
         await prepare()
-        guard let set, let campaign = set.campaigns.first(where: { $0.id == id }) else { return false }
-        let input = CampaignDecisionInput(
-            set: set, registry: registry, fetchedAt: clock.now, now: clock.now, context: context, person: person(),
-            daysSinceFirstSeen: 0, history: .init(), sessionShown: 0,
-            event: CampaignTriggerEvent(name: "debug"), texts: texts, imagesReady: imagesReady
-        )
+        guard let set, let state, let campaign = set.campaigns.first(where: { $0.id == id }) else { return false }
+        var input = makeInput(set: set, state: state, now: clock.now, event: CampaignObservedEvent(name: "debug"),
+                              internalDevice: true)
+        input.history = .init()
         guard case .success(let values) = CampaignRules.resolveValues(campaign, input) else { return false }
-        presenting = CampaignPresentation(
+        let presentation = CampaignPresentation(
             id: UUID(), campaign: campaign.id, setVersion: set.version, trigger: "debug",
             placement: campaign.placement, values: values, event: input.event, onTap: campaign.onTap
         )
+        if registry.placements[campaign.placement]?.kind == .system {
+            await complete(presentation, tapped: false)
+        } else {
+            presenting = presentation
+        }
         return true
     }
 
@@ -372,6 +467,9 @@ public final class CampaignEngine: CampaignEventObserving {
 
     /// The counts on hand (debug screens and tests).
     public var history: CampaignHistory { state?.history ?? .init() }
+
+    /// The holdout sides decided on this device (debug screens and tests).
+    public var sides: [String: CampaignSide] { state?.sides ?? [:] }
 
     static func days(from start: Date, to end: Date, in timeZone: TimeZone) -> Int {
         var calendar = Calendar(identifier: .gregorian)

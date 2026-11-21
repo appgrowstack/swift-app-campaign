@@ -13,15 +13,39 @@ public struct CampaignStoredState: Sendable, Equatable, Codable {
     public var reportedRejections: Set<String>
     /// The set version already reported as `campaigns_stale`.
     public var staleReportedVersion: Int?
+    /// The app version of the last launch, for `app_updated`.
+    public var lastAppVersion: String?
+    /// Holdout sides decided on this device. Once decided, a side does not change.
+    public var sides: [String: CampaignSide]
 
     public init(fetchedAt: Date? = nil, etag: String? = nil, firstSeenAt: Date, history: CampaignHistory = .init(),
-                reportedRejections: Set<String> = [], staleReportedVersion: Int? = nil) {
+                reportedRejections: Set<String> = [], staleReportedVersion: Int? = nil,
+                lastAppVersion: String? = nil, sides: [String: CampaignSide] = [:]) {
         self.fetchedAt = fetchedAt
         self.etag = etag
         self.firstSeenAt = firstSeenAt
         self.history = history
         self.reportedRejections = reportedRejections
         self.staleReportedVersion = staleReportedVersion
+        self.lastAppVersion = lastAppVersion
+        self.sides = sides
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case fetchedAt, etag, firstSeenAt, history, reportedRejections, staleReportedVersion, lastAppVersion, sides
+    }
+
+    /// Fields a state saved by an earlier SDK does not have start empty; the history carries over.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        fetchedAt = try container.decodeIfPresent(Date.self, forKey: .fetchedAt)
+        etag = try container.decodeIfPresent(String.self, forKey: .etag)
+        firstSeenAt = try container.decode(Date.self, forKey: .firstSeenAt)
+        history = try container.decodeIfPresent(CampaignHistory.self, forKey: .history) ?? .init()
+        reportedRejections = try container.decodeIfPresent(Set<String>.self, forKey: .reportedRejections) ?? []
+        staleReportedVersion = try container.decodeIfPresent(Int.self, forKey: .staleReportedVersion)
+        lastAppVersion = try container.decodeIfPresent(String.self, forKey: .lastAppVersion)
+        sides = try container.decodeIfPresent([String: CampaignSide].self, forKey: .sides) ?? [:]
     }
 }
 
@@ -92,9 +116,12 @@ public protocol CampaignSetFetching: Sendable {
     func fetch(etag: String?) async throws -> CampaignFetchResult
 }
 
-/// `GET <endpoint>/<project key>` with `If-None-Match`.
+/// `GET <endpoint>/<public key>` with `If-None-Match` (ETag `"v<version>"`).
 public struct HTTPCampaignSetFetcher: CampaignSetFetching {
-    public static let defaultEndpoint = URL(string: "https://campaigns.taniguchi-kyoichi.com/v1/sets/")!
+    /// `https://api.appgrowstack.com/v1/campaigns/sets/`.
+    public static let defaultEndpoint = URL(string: "https://api.appgrowstack.com/v1/campaigns/sets/")!
+    /// `https://api-staging.appgrowstack.com/v1/campaigns/sets/` (debug builds).
+    public static let stagingEndpoint = URL(string: "https://api-staging.appgrowstack.com/v1/campaigns/sets/")!
 
     public struct Failure: Error, Equatable {
         public let status: Int
@@ -104,13 +131,13 @@ public struct HTTPCampaignSetFetcher: CampaignSetFetching {
     public let url: URL
     private let session: URLSession
 
-    public init(projectKey: String, endpoint: URL = defaultEndpoint, session: URLSession = .shared) {
-        self.url = endpoint.appending(path: projectKey)
+    public init(publicKey: String, endpoint: URL = defaultEndpoint, session: URLSession = .shared) {
+        self.url = endpoint.appending(path: publicKey)
         self.session = session
     }
 
     public func fetch(etag: String?) async throws -> CampaignFetchResult {
-        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
         if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -162,5 +189,6 @@ public struct URLSessionImagePrefetcher: CampaignImagePrefetching {
 /// the SDK depends on no analytics package.
 public protocol CampaignEventObserving: Sendable {
     /// Returns at once. The decision runs in the background and never affects the caller.
-    func observe(_ name: String, _ properties: [String: CampaignValue])
+    /// Pass the values with their types (``CampaignValue/init(any:)`` reads `[String: Any]`).
+    func observe(_ name: String, _ props: [String: CampaignValue])
 }

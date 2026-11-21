@@ -36,24 +36,27 @@ public struct CampaignField: Sendable, Hashable {
 public enum CampaignPlacementKind: String, Sendable, Codable {
     /// The SDK says "show this now" and the app presents it in its own way.
     case modal
+    /// No look of its own: showing it runs the campaign's `on_tap` action at once (the system's
+    /// rating prompt). `campaign_tapped` is not recorded.
+    case system
 }
 
 /// A place in the app that can show a campaign. The app owns its look; a campaign only fills it.
 ///
 /// ```swift
-/// struct TrialOfferPlacement: CampaignPlacement {
-///     static let name = "trial_offer"
+/// struct BannerPlacement: CampaignPlacement {
+///     static let name = "banner"
 ///     static let fields: [String: CampaignField] = [
-///         "headline": .text(maxChars: 24), "body": .text(maxChars: 120),
-///         "primary_label": .text(maxChars: 24), "secondary_label": .text(maxChars: 12),
-///         "image": .image(),
+///         "title": .text(maxChars: 30), "badge": .string(),
 ///     ]
 ///     struct Values: Decodable, Sendable {
-///         let headline: String, body: String, primaryLabel: String, secondaryLabel: String
-///         let image: CampaignImage?
+///         let title: String
+///         let badge: String?
 ///     }
 /// }
 /// ```
+///
+/// The types' placements are ready-made in ``CampaignTemplate``.
 ///
 /// `Values` is decoded from the resolved values with snake_case keys turned into camelCase.
 public protocol CampaignPlacement {
@@ -142,16 +145,28 @@ public struct CampaignActionRequest: Sendable {
     public let setVersion: Int
     /// The trigger's id (`after_paywall`), so the action knows where the person came from.
     public let trigger: String
-    public let event: CampaignTriggerEvent
+    public let event: CampaignObservedEvent
     public let arguments: [String: CampaignValue]
+    /// The product an `open_store_page` names, from the set's `targets`.
+    public let target: CampaignTarget?
+
+    public init(campaign: String, setVersion: Int, trigger: String, event: CampaignObservedEvent,
+                arguments: [String: CampaignValue], target: CampaignTarget? = nil) {
+        self.campaign = campaign
+        self.setVersion = setVersion
+        self.trigger = trigger
+        self.event = event
+        self.arguments = arguments
+        self.target = target
+    }
 }
 
 public enum CampaignActionResult: String, Sendable {
     case completed, failed, cancelled
 }
 
-/// An action a campaign's `on_tap` can name. Rating requests are not actions (`campaign check`
-/// rejects them); ask through the system prompt instead.
+/// An action a campaign's `on_tap` can name. The types' actions are ready-made:
+/// ``startTrial(_:)``, ``requestReview(_:)`` and ``openStorePage(providerToken:open:)``.
 public struct CampaignAction: Sendable {
     public let name: String
     public let arguments: [String: CampaignArgument]
@@ -195,6 +210,7 @@ public struct CampaignRegistry: Sendable, Equatable {
         "lang": .init(type: .string, source: .device),
         "region": .init(type: .string, source: .device),
         "days_since_first_seen": .init(type: .int, source: .device),
+        "session_seconds": .init(type: .int, source: .device),
     ]
 
     func fact(_ name: String) -> FactSpec? { facts[name] ?? Self.sdkFacts[name] }

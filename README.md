@@ -17,83 +17,79 @@ triggers it, who it is for, how often, and who is held out for comparison. The d
 
 - **Your screens only.** A campaign can show only placements your app registered and that passed
   review in your binary. No HTML, no downloaded UI, no visual design in the SDK
+- **Ready-made types.** `trial_offer`, `review_ask` (the system's rating prompt, nothing in front of
+  it), `whats_new` and `cross_promo` come with their default placements and actions
+  (`CampaignTemplate`)
 - **A pure decision with reasons.** `CampaignRules.decide` reads no clock, storage or network and
   returns the campaign to show, or each campaign's reason not to: stale set → unusable → inactive →
   no trigger → limits → device conditions → server conditions → holdout → priority → text and images
-- **Server facts asked last.** A fact from your own server is requested only after every device
-  condition has passed
-- **A holdout for every campaign.** The same person is always on the same side
-  (`hash32("<project>:<person>:<id>:holdout")`), and held-out turns count like shown ones, so the two
-  groups are comparable
-- **Fails closed.** Offline, the set on hand is used for 72 hours, then nothing is shown. A broken
-  set keeps the previous one. An unknown placement, action, fact, operator or a wrong type skips that
-  campaign and is reported once as `campaign_rejected`
-- **Measurement goes through your analytics.** The SDK hands `campaign_*` events to a closure and
-  never sends anything itself
+- **Checked again after waiting.** A campaign waits while another full screen is up; then the set
+  and the counts are read again, so a campaign stopped, paused or ended meanwhile is not shown
+- **Typed events.** Event values keep their types, so `count gte 3` matches `3`, and a number sent as
+  the string `"3"` is reported as `type_mismatch` instead of silently never matching
+- **A holdout for every campaign, measured on both sides.** The side comes from the person id
+  (`hash32("<project>:<person>:<id>:holdout")`) and never changes once decided. Both sides record
+  `campaign_eligible(side)`, so the two groups are comparable
+- **Fails closed.** A launch waits for its first fetch before deciding; offline, the set on hand is
+  used within `cache_hours` (72 by default), then nothing is shown. A broken set keeps the previous
+  one. An unknown placement, action, fact, operator, target or a wrong type skips that campaign and
+  is reported once as `campaign_rejected`
+- **Measurement goes through your analytics.** The SDK hands `campaign_*`, `app_updated` and
+  `link_opened` to a closure and never sends anything itself
 - **No dependencies.** Foundation and Observation; SwiftUI only in `CampaignSwiftUI`
 
 ## Quick Start
 
-Register a placement, then build the engine:
+Build the engine with the placements, facts and actions your app registers:
 
 ```swift
 import CampaignCore
 
-struct TrialOfferPlacement: CampaignPlacement {
-    static let name = "trial_offer"
-    static let fields: [String: CampaignField] = [
-        "headline": .text(maxChars: 24), "primary_label": .text(maxChars: 24),
-        "secondary_label": .text(maxChars: 12),
-    ]
-    struct Values: Decodable, Sendable { let headline, primaryLabel, secondaryLabel: String }
-}
-
 let campaigns = CampaignEngine(
-    projectKey: "pk_…",
+    publicKey: "pk_…",
     context: CampaignContext(appVersion: version, build: build, channel: channel, lang: lang, region: region),
-    person: { auth.uid ?? installID },
-    placements: [TrialOfferPlacement.self],
+    person: { people.personID },          // the person id `identify` answered (the install id until then)
+    isInternalDevice: { debug.isInternalDevice },
+    placements: [CampaignTemplate.TrialOffer.self, CampaignTemplate.ReviewAsk.self],
     facts: [
         .device("is_premium", .bool) { .bool(premium.isPremium) },
         .server("trial_eligible", .bool) { try await .bool(trial.isEligible()) },
     ],
-    actions: [CampaignAction("start_trial") { request in await trialFlow.start(from: request.trigger) }],
-    record: { event in analytics.track(event.name, event.stringParameters) },
+    actions: [
+        .startTrial { request in await trialFlow.start(from: request.trigger) },
+        .requestReview { await review.requestSystemPrompt() },
+    ],
+    record: { event in analytics.track(event.name, event.parameters) },
     isBusy: { router.hasFullScreen }
 )
 ```
 
-Feed it events, refresh it, and present the placement with your own view:
+Refresh it, feed it events, and present the placement with your own view:
 
 ```swift
 import CampaignSwiftUI
 
 RootView()
-    .campaignPlacement(TrialOfferPlacement.self, in: campaigns) { offer in
-        TrialOfferSheet(values: offer.values, onPrimary: offer.tap, onClose: { offer.dismiss(.secondary) })
+    .campaignPlacement(CampaignTemplate.TrialOffer.self, in: campaigns) { offer in
+        TrialOfferCard(values: offer.values, onPrimary: offer.tap, onClose: { offer.dismiss(.secondary) })
     }
     .task { await campaigns.refresh() }   // and again on return to the foreground
 
 campaigns.observe("paywall_closed", ["result": "continue_free", "source": "habit_limit"])
+campaigns.observe("exchange_completed", ["count": 3])   // an Int, not "3"
 ```
 
-With [swift-analytics](https://github.com/no-problem-dev/swift-analytics), add the engine as one
-more destination in your app (this package does not depend on it):
+A `system` placement (`review_ask`) has no view: when it is shown, its action runs at once.
+
+Fire each event once in your analytics, and let the engine hear it as one more destination with the
+types intact (this package does not depend on any analytics package):
 
 ```swift
 struct CampaignAnalyticsTap: AnalyticsClient {
     let campaigns: any CampaignEventObserving
-    func track(_ event: any AnalyticsEvent) {
-        campaigns.observe(event.name, event.parameters.mapValues { value in
-            switch value {
-            case .text(let text): .string(text)
-            case .count(let count): .int(count)
-            case .number(let number): .double(number)
-            case .flag(let flag): .bool(flag)
-            }
-        })
+    func track(_ name: String, _ parameters: [String: Any]) {
+        campaigns.observe(name, parameters.compactMapValues(CampaignValue.init(any:)))
     }
-    func setUserProperty(_ property: any AnalyticsUserProperty) {}
 }
 ```
 
@@ -103,17 +99,28 @@ In your app's tests, check the registration against `campaigns/manifest.json`:
 try CampaignManifest.verify(campaigns.registry, against: manifestURL)
 ```
 
+### Types
+
+| Type | Placement (kind) | Action | Notes |
+|---|---|---|---|
+| `trial_offer` | `CampaignTemplate.TrialOffer` (modal) | `.startTrial(_:)` | The app owns the card and the trial |
+| `review_ask` | `CampaignTemplate.ReviewAsk` (system) | `.requestReview(_:)` | Always `completed`; `max_per_app_version: 1` |
+| `whats_new` | `CampaignTemplate.WhatsNew` (modal) | a link or an app action | Triggered by `app_updated`, which the SDK records on the first launch of a newer version |
+| `cross_promo` | `CampaignTemplate.CrossPromo` (modal) | `.openStorePage(providerToken:open:)` | Opens the App Store page of the set's `targets[target]` and records `link_opened(kind=store_page)` |
+
 ## Installation
 
 ```swift
-.package(url: "https://github.com/no-problem-dev/swift-app-campaign.git", .upToNextMinor(from: "0.1.0"))
+.package(url: "https://github.com/no-problem-dev/swift-app-campaign.git", .upToNextMinor(from: "0.2.0"))
 ```
 
 | Product | Contents | Depends on |
 |---|---|---|
-| `CampaignCore` | Loader, decision, holdout, engine, registration, manifest check, ports | Foundation, Observation |
+| `CampaignCore` | Loader, decision, holdout, engine, templates, registration, manifest check, ports | Foundation, Observation |
 | `CampaignSwiftUI` | `.campaignPlacement(_:in:style:isBusy:content:)` | SwiftUI |
 | `CampaignTesting` | Fake fetcher, clock, storage, image prefetcher; event recorder | nothing |
+
+0.2.0 is not compatible with 0.1.0; see [CHANGELOG.md](CHANGELOG.md).
 
 ## Requirements
 

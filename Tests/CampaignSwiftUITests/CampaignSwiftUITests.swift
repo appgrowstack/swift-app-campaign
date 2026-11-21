@@ -14,7 +14,7 @@ struct BannerPlacement: CampaignPlacement {
 struct CampaignSwiftUITests {
     @Test func modifierBuildsForEachStyle() {
         let engine = CampaignEngine(
-            projectKey: "pk_test", fetcher: FakeCampaignSetFetcher(), storage: InMemoryCampaignStorage(),
+            publicKey: "pk_test", fetcher: FakeCampaignSetFetcher(), storage: InMemoryCampaignStorage(),
             context: CampaignContext(appVersion: "1.0.0", build: "1", channel: "debug", lang: "ja", region: "JP"),
             person: { "p" }, placements: [BannerPlacement.self], record: { _ in }
         )

@@ -16,8 +16,11 @@ public struct CampaignManifest: Sendable, Codable, Equatable {
     }
 
     public struct Placement: Sendable, Codable, Equatable {
+        /// `modal` or `system`. `inline` and `web` are not shown by this SDK.
         public var kind: String
         public var since: Since
+        /// The type whose default placement this is (``CampaignTemplate``).
+        public var template: CampaignType?
         public var fields: [String: Field]
     }
 
@@ -32,6 +35,8 @@ public struct CampaignManifest: Sendable, Codable, Equatable {
 
     public struct Action: Sendable, Codable, Equatable {
         public var since: Since
+        /// The type whose default action this is.
+        public var template: CampaignType?
         public var args: [String: Argument]
     }
 
@@ -41,7 +46,8 @@ public struct CampaignManifest: Sendable, Codable, Equatable {
         public var since: Since
     }
 
-    public var app: String
+    /// The project's id (`gamification-app`).
+    public var project: String
     public var placements: [String: Placement]
     public var assets: [String: Asset]
     public var actions: [String: Action]
@@ -49,7 +55,7 @@ public struct CampaignManifest: Sendable, Codable, Equatable {
     public var linkHosts: [String]
 
     enum CodingKeys: String, CodingKey {
-        case app, placements, assets, actions, facts, linkHosts = "link_hosts"
+        case project, placements, assets, actions, facts, linkHosts = "link_hosts"
     }
 
     public init(data: Data) throws {
@@ -98,7 +104,35 @@ public struct CampaignManifest: Sendable, Codable, Equatable {
         compare("fact", registry.facts, expected.facts)
         compare("asset", Dictionary(uniqueKeysWithValues: registry.assets.map { ($0, true) }),
                 Dictionary(uniqueKeysWithValues: expected.assets.map { ($0, true) }))
+        differences += manifest.templateDifferences
         if !differences.isEmpty { throw CampaignManifestMismatch(differences: differences) }
+    }
+}
+
+extension CampaignManifest {
+    /// Placements and actions that name a `template` but differ from the type's default.
+    public var templateDifferences: [String] {
+        var differences: [String] = []
+        for name in placements.keys.sorted() {
+            guard let placement = placements[name], let type = placement.template else { continue }
+            guard let template = CampaignTemplate.placement(for: type) else {
+                differences.append("placement \(name): \(type.rawValue) has no default placement")
+                continue
+            }
+            let spec = CampaignPlacementSpec(template)
+            let fields = placement.fields.mapValues { CampaignField($0.type, required: $0.required, maxChars: $0.maxChars) }
+            if name != spec.name || placement.kind != spec.kind.rawValue || fields != spec.fields {
+                differences.append("placement \(name): differs from the \(type.rawValue) template")
+            }
+        }
+        for name in actions.keys.sorted() {
+            guard let action = actions[name], let type = action.template else { continue }
+            let args = action.args.mapValues { CampaignArgument($0.type, required: $0.required) }
+            if CampaignTemplate.actions(for: type)[name] != args {
+                differences.append("action \(name): differs from the \(type.rawValue) template")
+            }
+        }
+        return differences
     }
 }
 

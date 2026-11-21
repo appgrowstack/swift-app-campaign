@@ -6,11 +6,35 @@ import Testing
 @MainActor
 struct CampaignManifestTests {
     static let manifest = Bundle.module.url(forResource: "Cases", withExtension: nil)!
-        .appending(path: "manifests/gamification-app.json")
+        .appending(path: "inapp/manifests/gamification-app.json")
 
     @Test func registryFromTheManifestMatchesItself() throws {
         let manifest = try CampaignManifest(contentsOf: Self.manifest)
         try CampaignManifest.verify(manifest.registry, against: manifest)
+    }
+
+    @Test func manifestNamesTheProject() throws {
+        #expect(try CampaignManifest(contentsOf: Self.manifest).project == "gamification-app")
+    }
+
+    @Test func templatesAreTheManifestsDefaults() throws {
+        let manifest = try CampaignManifest(contentsOf: Self.manifest)
+        #expect(manifest.templateDifferences.isEmpty)
+        let registry = manifest.registry
+        for type in CampaignType.allCases {
+            guard let placement = CampaignTemplate.placement(for: type) else { continue }
+            #expect(registry.placements[placement.name] == CampaignPlacementSpec(placement), "\(type)")
+            for (name, args) in CampaignTemplate.actions(for: type) {
+                #expect(registry.actions[name] == args, "\(name)")
+            }
+        }
+        #expect(registry.placements["review_ask"]?.kind == .system)
+    }
+
+    @Test func aTemplatePlacementThatDiffersIsListed() throws {
+        var manifest = try CampaignManifest(contentsOf: Self.manifest)
+        manifest.placements["review_ask"]?.kind = "modal"
+        #expect(manifest.templateDifferences == ["placement review_ask: differs from the review_ask template"])
     }
 
     @Test func differencesAreListed() throws {

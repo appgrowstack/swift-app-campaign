@@ -14,7 +14,8 @@ let package = Package(
     ],
     products: [
         // Decision, limits, holdout, fetching and caching the set, the event port, placement
-        // registration and type checks, and the metrics hook. Foundation and Observation only.
+        // registration and type checks, the types' default placements and actions, and the
+        // metrics hook. Foundation and Observation only.
         .library(name: "CampaignCore", targets: ["CampaignCore"]),
         // Optional SwiftUI helpers to present a modal placement. No visual design.
         .library(name: "CampaignSwiftUI", targets: ["CampaignSwiftUI"]),

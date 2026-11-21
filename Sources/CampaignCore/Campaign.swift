@@ -1,7 +1,7 @@
 import Foundation
 
 /// Why a campaign or a whole set could not be used. Sent as `campaign_rejected(reason=…)`.
-public enum CampaignRejectReason: String, Sendable, Hashable, Codable {
+public enum CampaignRejectReason: String, Sendable, Hashable, Codable, CaseIterable {
     case parseError = "parse_error"
     case schemaTooNew = "schema_too_new"
     case invalid
@@ -10,14 +10,27 @@ public enum CampaignRejectReason: String, Sendable, Hashable, Codable {
     case unknownAsset = "unknown_asset"
     case unknownFact = "unknown_fact"
     case unknownOperator = "unknown_operator"
+    /// An `open_store_page` names a product that is not in the set's `targets`.
+    case unknownTarget = "unknown_target"
     case missingValue = "missing_value"
     case unknownValue = "unknown_value"
     case typeMismatch = "type_mismatch"
 }
 
+/// The campaign's type. Every type but `custom` has a template with a default placement and
+/// action (``CampaignTemplate``), and extra checks in `app-growth campaigns check`.
+public enum CampaignType: String, Sendable, Hashable, Codable, CaseIterable {
+    case trialOffer = "trial_offer"
+    case reviewAsk = "review_ask"
+    case whatsNew = "whats_new"
+    case crossPromo = "cross_promo"
+    case custom
+}
+
 /// One campaign that passed every check against the app's registration.
 public struct Campaign: Sendable, Equatable {
     public let id: String
+    public let type: CampaignType
     public let title: String
     public let priority: Int
     public let placement: String
@@ -45,6 +58,8 @@ struct CampaignTrigger: Sendable, Equatable {
 
 struct CampaignLimits: Sendable, Equatable {
     let maxShown: Int
+    /// `nil`: no limit per app version.
+    let maxPerAppVersion: Int?
     let minHoursBetween: Double
     let afterDismissDays: Double
     /// `nil`: never again after the action completed.
@@ -69,11 +84,31 @@ public struct CampaignPolicy: Sendable, Equatable {
     }
 }
 
+/// A product a `cross_promo` campaign introduces, copied from the registry into the set.
+public struct CampaignTarget: Sendable, Equatable, Hashable {
+    /// The product's project id (`reading-memory`).
+    public let id: String
+    public let name: String
+    /// The App Store id (`asc_app_id`), when the product is on iOS.
+    public let appStoreID: String?
+    /// The Play package, when the product is on Android.
+    public let playPackage: String?
+
+    public init(id: String, name: String, appStoreID: String? = nil, playPackage: String? = nil) {
+        self.id = id
+        self.name = name
+        self.appStoreID = appStoreID
+        self.playPackage = playPackage
+    }
+}
+
 /// A set the device can use: the campaigns that passed the checks, in the set's order.
 public struct CampaignSet: Sendable, Equatable {
     public let project: String
+    /// 0 for a project that has not sent anything yet.
     public let version: Int
     public let policy: CampaignPolicy
+    public let targets: [String: CampaignTarget]
     public let campaigns: [Campaign]
 }
 

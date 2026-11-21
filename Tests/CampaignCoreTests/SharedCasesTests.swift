@@ -2,10 +2,13 @@ import Foundation
 import Testing
 @testable import CampaignCore
 
-/// Runs every case in `schema/cases` (copied by `scripts/sync-cases.sh`). Kotlin and the server
-/// read the same files, so a difference in the decision fails on every side.
+/// Runs every case in `schema/cases/inapp` and the vectors in `schema/cases/experiment` (copied by
+/// `scripts/sync-cases.sh`). Kotlin, the CLI and the server read the same files, so a difference
+/// in the decision fails on every side.
 struct SharedCasesTests {
-    static let directory = Bundle.module.url(forResource: "Cases", withExtension: nil)!
+    static let cases = Bundle.module.url(forResource: "Cases", withExtension: nil)!
+    static let directory = cases.appending(path: "inapp")
+    static let experiment = cases.appending(path: "experiment")
 
     static let names: [String] = {
         let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
@@ -13,7 +16,7 @@ struct SharedCasesTests {
     }()
 
     @Test func thereAreCases() {
-        #expect(Self.names.count >= 30)
+        #expect(Self.names.count >= 100)
     }
 
     @Test(arguments: names)
@@ -36,12 +39,36 @@ struct SharedCasesTests {
     }
 
     @Test func hashVectors() throws {
-        let file = Self.directory.appending(path: "vectors/hash32.json")
+        let file = Self.experiment.appending(path: "hash32.json")
         let vectors = try #require(JSONValue.parse(Data(contentsOf: file))?.object?["vectors"]?.array)
+        #expect(!vectors.isEmpty)
         for vector in vectors {
             let input = try #require(vector.object?["input"]?.string)
             let expected = try #require(vector.object?["hash32"]?.int)
             #expect(Int(CampaignHash.hash32(input)) == expected, "\(input)")
+        }
+    }
+
+    @Test func holdoutVectors() throws {
+        let file = Self.experiment.appending(path: "holdout.json")
+        let vectors = try #require(JSONValue.parse(Data(contentsOf: file))?.object?["vectors"]?.array)
+        #expect(!vectors.isEmpty)
+        for vector in vectors {
+            let object = try #require(vector.object)
+            let input = try #require(object["input"]?.object)
+            let expect = try #require(object["expect"]?.object)
+            let project = try #require(input["project"]?.string)
+            let person = try #require(input["person_id"]?.string)
+            let campaign = try #require(input["campaign"]?.string)
+            let holdout = try #require(input["holdout"]?.number)
+            let internalDevice = try #require(input["internal"]?.bool)
+            #expect(object["key"]?.string == "\(project):\(person):\(campaign):holdout")
+            #expect(object["hash32"]?.int == Int(CampaignHash.hash32("\(project):\(person):\(campaign):holdout")))
+            let unit = CampaignHash.unit(project: project, person: person, campaign: campaign)
+            #expect((unit * 1_000_000).rounded() / 1_000_000 == expect["unit"]?.number, "\(person) \(campaign)")
+            let side = CampaignHash.side(project: project, person: person, campaign: campaign,
+                                         holdout: holdout, internalDevice: internalDevice)
+            #expect(side.rawValue == expect["side"]?.string, "\(person) \(campaign)")
         }
     }
 
@@ -59,6 +86,7 @@ struct SharedCasesTests {
     static func run(_ json: [String: JSONValue]) async throws -> Result {
         let manifestName = try need(json["manifest"]?.string)
         let manifest = try CampaignManifest(contentsOf: directory.appending(path: "manifests/\(manifestName).json"))
+        #expect(manifest.project == manifestName)
         let registry = manifest.registry
 
         let data: Data
@@ -79,7 +107,7 @@ struct SharedCasesTests {
         }
 
         let context = try need(json["context"]?.object)
-        let history = try need(json["history"]?.object)
+        let history = try readHistory(need(json["history"]?.object))
         let facts = (json["facts"]?.object ?? [:]).compactMapValues(\.scalar)
         let texts = (json["texts"]?.object ?? [:]).compactMapValues(\.string)
         let eventJSON = try need(json["event"]?.object)
@@ -96,45 +124,83 @@ struct SharedCasesTests {
                 channel: try need(context["channel"]?.string),
                 lang: try need(context["lang"]?.string),
                 region: try need(context["region"]?.string),
-                timeZone: try need(context["time_zone"]?.string.flatMap(TimeZone.init(identifier:))),
-                internalDevice: context["internal_device"]?.bool ?? false
+                timeZone: try need(context["time_zone"]?.string.flatMap(TimeZone.init(identifier:)))
             ),
+            internalDevice: try need(context["internal_device"]?.bool),
             person: try need(json["person"]?.string),
-            daysSinceFirstSeen: context["days_since_first_seen"]?.int ?? 0,
-            history: CampaignHistory(
-                shownAt: try (history["shown_at"]?.array ?? []).map { try date($0) },
-                campaigns: try (history["campaigns"]?.object ?? [:]).mapValues { value in
-                    let record = try need(value.object)
-                    return CampaignRecord(
-                        shownCount: record["shown_count"]?.int ?? 0,
-                        lastShownAt: try optionalDate(record["last_shown_at"]),
-                        dismissedAt: try optionalDate(record["dismissed_at"]),
-                        actionCompletedAt: try optionalDate(record["action_completed_at"])
-                    )
-                }
-            ),
-            sessionShown: history["session_shown"]?.int ?? 0,
-            event: CampaignTriggerEvent(
+            daysSinceFirstSeen: try need(context["days_since_first_seen"]?.int),
+            sessionSeconds: context["session_seconds"]?.int ?? 0,
+            history: history.history,
+            sessionShown: history.sessionShown,
+            event: CampaignObservedEvent(
                 name: try need(eventJSON["name"]?.string),
-                properties: (eventJSON["props"]?.object ?? [:]).compactMapValues(\.scalar)
+                props: try need(eventJSON["props"]?.object).compactMapValues(\.scalar)
             ),
             texts: { texts[$0] },
             imagesReady: Set((json["images_ready"]?.array ?? []).compactMap { $0.string.flatMap(URL.init(string:)) })
         )
 
         let decision = await CampaignRules.decide(input) { facts[$0] }
-        result.show = decision.shown?.campaign.id
-        result.trigger = decision.shown?.trigger
-        if let values = decision.shown?.values {
-            result.values = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(values))
-        }
         for (id, outcome) in decision.outcomes { result.outcomes[id] = outcome.code }
         result.records += decision.records.map(event)
+        var shown = decision.shown
+
+        // C4: the app is busy for `busy_seconds` after the event, then steps 3–5 run again with the
+        // set and counts the SDK has at that time.
+        if let wait = json["wait"]?.object, let selection = shown {
+            let busy = try need(wait["busy_seconds"]?.int)
+            if busy > selection.waitSeconds {
+                shown = nil
+                result.outcomes[selection.campaign.id] = CampaignOutcome.busy.code
+                result.records.append(event(.skipped(selection.campaign.id, version: set.version,
+                                                     trigger: selection.trigger, reason: .busy)))
+            } else {
+                var later = input
+                later.now = input.now.addingTimeInterval(Double(busy))
+                if let raw = wait["set"], !raw.isNull {
+                    guard case .loaded(let newer, _) = CampaignSetLoader.load(try JSONEncoder().encode(raw), registry: registry)
+                    else { throw Missing() }
+                    later.set = newer
+                }
+                if let raw = wait["history"], !raw.isNull {
+                    let newer = try readHistory(need(raw.object))
+                    later.history = newer.history
+                    later.sessionShown = newer.sessionShown
+                }
+                let recheck = CampaignRules.recheck(selection, later)
+                result.outcomes[selection.campaign.id] = recheck.outcome.code
+                result.records += recheck.records.map(event)
+                shown = recheck.shown
+            }
+        }
+
+        result.show = shown?.campaign.id
+        result.trigger = shown?.trigger
+        if let values = shown?.values {
+            result.values = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(values))
+        }
         result.serverFactsRead = decision.serverFactsRead
         return result
     }
 
     struct Missing: Error {}
+
+    static func readHistory(_ json: [String: JSONValue]) throws -> (history: CampaignHistory, sessionShown: Int) {
+        let history = CampaignHistory(
+            shownAt: try need(json["shown_at"]?.array).map { try date($0) },
+            campaigns: try need(json["campaigns"]?.object).mapValues { value in
+                let record = try need(value.object)
+                return CampaignRecord(
+                    shownCount: record["shown_count"]?.int ?? 0,
+                    lastShownAt: try optionalDate(record["last_shown_at"]),
+                    shownByAppVersion: (record["shown_by_app_version"]?.object ?? [:]).compactMapValues(\.int),
+                    dismissedAt: try optionalDate(record["dismissed_at"]),
+                    actionCompletedAt: try optionalDate(record["action_completed_at"])
+                )
+            }
+        )
+        return (history, try need(json["session_shown"]?.int))
+    }
 
     static func need<T>(_ value: T?) throws -> T {
         guard let value else { throw Missing() }

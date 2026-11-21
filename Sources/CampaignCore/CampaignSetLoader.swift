@@ -23,15 +23,16 @@ public enum CampaignSetLoader {
         let version = root["version"]?.int ?? 0
         guard let schema = root["schema_version"]?.int else { return .unusable(version: version, reason: .invalid) }
         guard schema <= schemaVersion else { return .unusable(version: version, reason: .schemaTooNew) }
-        guard let project = root["project"]?.string, root["version"]?.int != nil,
-              let items = root["campaigns"]?.array else { return .unusable(version: version, reason: .invalid) }
+        guard let project = root["project"]?.string, let number = root["version"]?.int, number >= 0,
+              let items = root["campaigns"]?.array,
+              let targets = targetsOf(root["targets"]) else { return .unusable(version: version, reason: .invalid) }
 
         var campaigns: [Campaign] = []
         var rejections: [Rejection] = []
         var seen: Set<String> = []
         for item in items {
             do throws(CampaignRejection) {
-                let campaign = try parseCampaign(item, registry: registry)
+                let campaign = try parseCampaign(item, registry: registry, targets: targets)
                 guard seen.insert(campaign.id).inserted else { throw CampaignRejection.invalid }
                 campaigns.append(campaign)
             } catch {
@@ -39,12 +40,27 @@ public enum CampaignSetLoader {
             }
         }
         return .loaded(CampaignSet(project: project, version: version, policy: policy(root["policy"]),
-                                   campaigns: campaigns), rejections: rejections)
+                                   targets: targets, campaigns: campaigns), rejections: rejections)
     }
 
     private static func rejectedID(_ item: JSONValue) -> String {
         guard let id = item.object?["id"]?.string, isCampaignID(id) else { return "_invalid" }
         return id
+    }
+
+    /// `nil` when `targets` is missing or not an object. A target without a name is left out.
+    private static func targetsOf(_ json: JSONValue?) -> [String: CampaignTarget]? {
+        guard let object = json?.object else { return nil }
+        var targets: [String: CampaignTarget] = [:]
+        for (id, value) in object {
+            guard let target = value.object, let name = target["name"]?.string, !name.isEmpty else { continue }
+            targets[id] = CampaignTarget(
+                id: id, name: name,
+                appStoreID: target["ios"]?.object?["asc_app_id"]?.string,
+                playPackage: target["android"]?.object?["package"]?.string
+            )
+        }
+        return targets
     }
 
     private static func policy(_ json: JSONValue?) -> CampaignPolicy {
@@ -67,12 +83,14 @@ public enum CampaignSetLoader {
 
     // MARK: - One campaign
 
-    private static func parseCampaign(_ json: JSONValue, registry: CampaignRegistry) throws(CampaignRejection) -> Campaign {
+    private static func parseCampaign(_ json: JSONValue, registry: CampaignRegistry,
+                                      targets: [String: CampaignTarget]) throws(CampaignRejection) -> Campaign {
         guard let object = json.object else { throw .invalid }
         guard let schema = object["schema_version"]?.int else { throw .invalid }
         guard schema <= schemaVersion else { throw .init(.schemaTooNew) }
 
         guard let id = object["id"]?.string, isCampaignID(id),
+              let type = object["type"]?.string.flatMap(CampaignType.init(rawValue:)),
               let status = object["status"]?.string, ["active", "paused", "draft"].contains(status),
               let title = object["title"]?.string,
               object["purpose"]?.string != nil,
@@ -95,10 +113,10 @@ public enum CampaignSetLoader {
         let audience = try audienceOf(object["audience"], registry: registry)
         let limits = try limitsOf(object["limits"])
         let (placement, values, textKey) = try showOf(object["show"], registry: registry)
-        let onTap = try onTapOf(object["on_tap"], registry: registry)
+        let onTap = try onTapOf(object["on_tap"], registry: registry, targets: targets)
 
         return Campaign(
-            id: id, title: title, priority: priority, placement: placement, status: status,
+            id: id, type: type, title: title, priority: priority, placement: placement, status: status,
             platforms: platforms, appVersion: appVersion, channels: channels,
             startsAt: startsAt, endsAt: endsAt, triggers: triggers, audience: audience, limits: limits,
             holdout: holdout, values: values, textKey: textKey, onTap: onTap
@@ -147,12 +165,17 @@ public enum CampaignSetLoader {
               let between = object["min_hours_between"]?.number, between >= 0,
               let dismiss = object["after_dismiss_days"]?.number, dismiss >= 0,
               let action = object["after_action_days"] else { throw .invalid }
+        var perVersion: Int?
+        if let value = object["max_per_app_version"] {
+            guard let count = value.int, (1...20).contains(count) else { throw .invalid }
+            perVersion = count
+        }
         let afterAction: Double?
         if action.isNull { afterAction = nil } else {
             guard let days = action.number, days >= 0 else { throw .invalid }
             afterAction = days
         }
-        return CampaignLimits(maxShown: maxShown, minHoursBetween: between, afterDismissDays: dismiss, afterActionDays: afterAction)
+        return CampaignLimits(maxShown: maxShown, maxPerAppVersion: perVersion, minHoursBetween: between, afterDismissDays: dismiss, afterActionDays: afterAction)
     }
 
     private static func showOf(_ json: JSONValue?, registry: CampaignRegistry)
@@ -164,7 +187,8 @@ public enum CampaignSetLoader {
         for key in values.keys where placement.fields[key] == nil { throw .init(.unknownValue) }
         for (key, field) in placement.fields {
             guard let value = values[key] else {
-                if field.required { throw .init(.missingValue) }
+                // C5: with a text_key, a required text may come from the app's table when it is chosen.
+                if field.required && !(field.type == .text && textKey != nil) { throw .init(.missingValue) }
                 continue
             }
             try check(value, as: field.type, registry: registry)
@@ -186,7 +210,8 @@ public enum CampaignSetLoader {
         }
     }
 
-    private static func onTapOf(_ json: JSONValue?, registry: CampaignRegistry) throws(CampaignRejection) -> CampaignTap {
+    private static func onTapOf(_ json: JSONValue?, registry: CampaignRegistry,
+                                targets: [String: CampaignTarget]) throws(CampaignRejection) -> CampaignTap {
         guard let object = json?.object else { throw .invalid }
         if let link = object["link"] {
             guard object.count == 1, let text = link.string, let url = URL(string: text),
@@ -203,6 +228,9 @@ public enum CampaignSetLoader {
             args[key] = value
         }
         for (key, argument) in spec where argument.required && args[key] == nil { throw .init(.missingValue) }
+        if name == CampaignAction.openStorePageName {
+            guard case .string(let target)? = args["target"], targets[target] != nil else { throw .init(.unknownTarget) }
+        }
         return .action(name, args)
     }
 

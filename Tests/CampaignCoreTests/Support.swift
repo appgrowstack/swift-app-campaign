@@ -2,21 +2,7 @@ import CampaignCore
 import CampaignTesting
 import Foundation
 
-struct TrialOfferPlacement: CampaignPlacement {
-    static let name = "trial_offer"
-    static let fields: [String: CampaignField] = [
-        "headline": .text(maxChars: 24), "body": .text(maxChars: 120),
-        "primary_label": .text(maxChars: 24), "secondary_label": .text(maxChars: 12),
-        "image": .image(),
-    ]
-    struct Values: Decodable, Sendable {
-        let headline: String
-        let body: String
-        let primaryLabel: String
-        let secondaryLabel: String
-        let image: CampaignImage?
-    }
-}
+typealias TrialOfferPlacement = CampaignTemplate.TrialOffer
 
 /// Registers `trial_offer` with fields that do not match its `Values` (the app's own bug).
 struct BrokenPlacement: CampaignPlacement {
@@ -41,7 +27,7 @@ enum Fixture {
 
     static func campaign(_ overrides: [String: Any] = [:]) -> [String: Any] {
         var campaign: [String: Any] = [
-            "schema_version": 1, "id": id, "status": "active", "title": "2日間を勧める", "purpose": "比べる",
+            "schema_version": 1, "id": id, "type": "trial_offer", "status": "active", "title": "2日間を勧める", "purpose": "比べる",
             "priority": 50, "platforms": ["ios", "android"],
             "app_version": ["ios": ">=3.3.0", "android": ">=3.3.0"],
             "starts_at": "2026-12-01T00:00:00+09:00", "ends_at": NSNull(),
@@ -66,15 +52,57 @@ enum Fixture {
         return campaign
     }
 
-    static func set(_ campaigns: [[String: Any]] = [campaign()], version: Int = 1, policy: [String: Any] = [:]) -> Data {
+    static func set(_ campaigns: [[String: Any]] = [campaign()], version: Int = 1, policy: [String: Any] = [:],
+                    targets: [String: Any] = [:]) -> Data {
         let set: [String: Any] = [
             "schema_version": 1, "project": "gamification-app", "version": version,
-            "published_at": 1_765_000_000_000, "policy": policy, "campaigns": campaigns,
+            "published_at": 1_765_000_000_000, "policy": policy, "targets": targets, "campaigns": campaigns,
         ]
         return try! JSONSerialization.data(withJSONObject: set)
     }
 
-    static let paywallClosed = CampaignTriggerEvent(name: "paywall_closed", properties: ["result": "continue_free", "source": "habit_limit"])
+    static let paywallClosed = CampaignObservedEvent(name: "paywall_closed", props: ["result": "continue_free", "source": "habit_limit"])
+
+    static func reviewAsk(_ overrides: [String: Any] = [:]) -> [String: Any] {
+        campaign([
+            "id": "review-after-third-exchange", "type": "review_ask", "holdout": 0, "audience": NSNull(),
+            "triggers": [["id": "third_exchange", "event": "exchange_completed",
+                          "where": ["prop": "count", "gte": 3], "wait_seconds": 2]],
+            "limits": ["max_shown": 3, "max_per_app_version": 1, "min_hours_between": 1440,
+                       "after_dismiss_days": 60, "after_action_days": 60],
+            "show": ["placement": "review_ask", "values": [String: Any]()],
+            "on_tap": ["action": "request_review", "args": [String: Any]()],
+        ].merging(overrides) { $1 })
+    }
+
+    static func whatsNew() -> [String: Any] {
+        campaign([
+            "id": "whats-new-3-3-0", "type": "whats_new", "holdout": 0, "audience": NSNull(),
+            "triggers": [["id": "updated", "event": "app_updated",
+                          "where": ["prop": "to_version", "eq": "3.3.0"], "wait_seconds": 30]],
+            "limits": ["max_shown": 1, "min_hours_between": 0, "after_dismiss_days": 0, "after_action_days": NSNull()],
+            "show": ["placement": "whats_new", "values": [
+                "headline": ["ja": "押さなくても、達成に"], "body": ["ja": "自動で達成になります。"],
+            ]],
+            "on_tap": ["link": "https://gohobishukan.com/app/settings/auto-check/"],
+        ])
+    }
+
+    static func crossPromo() -> [String: Any] {
+        campaign([
+            "id": "cross-promo-reading-memory", "type": "cross_promo", "holdout": 0, "audience": NSNull(),
+            "triggers": [["id": "reading_streak", "event": "habit_achieved", "where": NSNull(), "wait_seconds": 0]],
+            "show": ["placement": "cross_promo", "values": [
+                "headline": ["ja": "読んだ本も、残しませんか"], "body": ["ja": "読書メモリー"],
+                "icon": ["asset": "trial_gift"], "primary_label": ["ja": "App Store で見る"],
+            ]],
+            "on_tap": ["action": "open_store_page", "args": ["target": "reading-memory"]],
+        ])
+    }
+
+    static var readingMemory: [String: Any] { [
+        "reading-memory": ["name": "読書メモリー", "ios": ["asc_app_id": "6740000000"]],
+    ] }
 }
 
 @MainActor
@@ -86,6 +114,11 @@ final class Harness {
     let premium = Box(false)
     let eligible = Box<Bool?>(true)
     let busy = Box(false)
+    let internalDevice: Box<Bool>
+    let person: Box<String>
+    let reviews = Box(0)
+    let opened = Box<[URL]>([])
+    let links = Box<[URL]>([])
     let serverAsks = Box(0)
     let actionRuns = Box<[CampaignActionRequest]>([])
     let engine: CampaignEngine
@@ -94,20 +127,26 @@ final class Harness {
          fetcher: FakeCampaignSetFetcher = FakeCampaignSetFetcher(),
          storage: InMemoryCampaignStorage = InMemoryCampaignStorage(),
          clock: FakeCampaignClock = FakeCampaignClock(Fixture.start),
-         placement: any CampaignPlacement.Type = TrialOfferPlacement.self,
+         placements: [any CampaignPlacement.Type] = [TrialOfferPlacement.self],
+         appVersion: String = "3.3.0",
          actionResult: CampaignActionResult = .completed) {
         self.fetcher = fetcher
         self.storage = storage
         self.clock = clock
+        self.internalDevice = Box(internalDevice)
+        self.person = Box(person)
         let premium = premium, eligible = eligible, busy = busy, serverAsks = serverAsks, actionRuns = actionRuns
+        let internalBox = self.internalDevice, personBox = self.person
+        let reviews = reviews, opened = opened, links = links
         engine = CampaignEngine(
-            projectKey: "pk_test",
+            publicKey: "pk_test",
             fetcher: fetcher,
             storage: storage,
-            context: CampaignContext(appVersion: "3.3.0", build: "330", channel: "appstore", lang: "ja", region: "JP",
-                                     timeZone: TimeZone(identifier: "Asia/Tokyo")!, internalDevice: internalDevice),
-            person: { person },
-            placements: [placement],
+            context: CampaignContext(appVersion: appVersion, build: "330", channel: "appstore", lang: "ja", region: "JP",
+                                     timeZone: TimeZone(identifier: "Asia/Tokyo")!),
+            person: { personBox.value },
+            isInternalDevice: { internalBox.value },
+            placements: placements,
             facts: [
                 .device("is_premium", .bool) { .bool(premium.value) },
                 .server("trial_eligible", .bool) {
@@ -115,11 +154,19 @@ final class Harness {
                     return eligible.value.map(CampaignValue.bool)
                 },
             ],
-            actions: [CampaignAction("start_trial") { request in
-                actionRuns.value.append(request)
-                return actionResult
-            }],
+            actions: [
+                .startTrial { request in
+                    actionRuns.value.append(request)
+                    return actionResult
+                },
+                .requestReview { reviews.value += 1 },
+                .openStorePage(providerToken: "118079") { url in
+                    opened.value.append(url)
+                    return true
+                },
+            ],
             assets: ["trial_gift"],
+            link: { links.value.append($0) },
             record: recorder.record,
             texts: { _ in nil },
             isBusy: { busy.value },
@@ -134,7 +181,7 @@ final class Harness {
     }
 
     /// Fetches (304) so the set stays fresh, moves the clock, and sends the event.
-    func later(_ seconds: TimeInterval, event: CampaignTriggerEvent = Fixture.paywallClosed) async {
+    func later(_ seconds: TimeInterval, event: CampaignObservedEvent = Fixture.paywallClosed) async {
         clock.advance(by: seconds)
         await fetcher.enqueue(.notModified)
         await engine.refresh()
