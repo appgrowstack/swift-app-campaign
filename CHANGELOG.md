@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-22
+
 ### Added
 
 - The `survey` type: `CampaignTemplate.Survey` (placement kind `sheet`), `CampaignAction.submitAnswer()`,
@@ -14,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   A survey is not shown in a launch where `paywall_closed` was heard. `survey_*` events never trigger.
 - `CampaignContext(firstSeenAt:)`: the app's own first-launch date, from before it used this SDK.
   `days_since_first_seen` counts from the earlier of it and the date the engine stored.
+
+### Fixed
+
+- Fetching the set again no longer writes back an old copy of the history (how often each campaign was
+  shown) over what was recorded while the set was saved and its images prefetched. The state is read
+  after the wait.
 
 ## [0.3.0] - 2026-11-21
 
