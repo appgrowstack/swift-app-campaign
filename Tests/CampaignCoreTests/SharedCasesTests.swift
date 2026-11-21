@@ -137,7 +137,8 @@ struct SharedCasesTests {
                 props: try need(eventJSON["props"]?.object).compactMapValues(\.scalar)
             ),
             texts: { texts[$0] },
-            imagesReady: Set((json["images_ready"]?.array ?? []).compactMap { $0.string.flatMap(URL.init(string:)) })
+            imagesReady: Set((json["images_ready"]?.array ?? []).compactMap { $0.string.flatMap(URL.init(string:)) }),
+            sides: (json["sides"]?.object ?? [:]).compactMapValues { $0.string.flatMap(CampaignSide.init(rawValue:)) }
         )
 
         let decision = await CampaignRules.decide(input) { facts[$0] }
