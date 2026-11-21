@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Fetching the set sends `AppGrowStack-Client: <platform>/<app_version>/swift-app-campaign/<version>`
+  (`ios/3.3.0/swift-app-campaign/0.2.0`), built from `CampaignContext` by the engine. It carries
+  nothing that identifies a person. `HTTPCampaignSetFetcher(publicKey:endpoint:client:session:)`
+  now takes the header value; build it with `CampaignSDK.client(platform:appVersion:)`.
+
+### Added
+
+- `CampaignSDK.name` and `CampaignSDK.version`.
+
 ## [0.2.0] - 2026-11-21
 
 Rebuilt on the appgrowstack contract (K1). Not compatible with 0.1.0: there are no aliases for the

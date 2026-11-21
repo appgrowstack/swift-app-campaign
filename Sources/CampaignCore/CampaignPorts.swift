@@ -116,7 +116,8 @@ public protocol CampaignSetFetching: Sendable {
     func fetch(etag: String?) async throws -> CampaignFetchResult
 }
 
-/// `GET <endpoint>/<public key>` with `If-None-Match` (ETag `"v<version>"`).
+/// `GET <endpoint>/<public key>` with `If-None-Match` (ETag `"v<version>"`) and the
+/// `AppGrowStack-Client` header (``CampaignSDK/client(platform:appVersion:)``).
 public struct HTTPCampaignSetFetcher: CampaignSetFetching {
     /// `https://api.appgrowstack.com/v1/campaigns/sets/`.
     public static let defaultEndpoint = URL(string: "https://api.appgrowstack.com/v1/campaigns/sets/")!
@@ -129,16 +130,21 @@ public struct HTTPCampaignSetFetcher: CampaignSetFetching {
     }
 
     public let url: URL
+    /// The `AppGrowStack-Client` header value.
+    public let client: String
     private let session: URLSession
 
-    public init(publicKey: String, endpoint: URL = defaultEndpoint, session: URLSession = .shared) {
+    /// - Parameter client: the `AppGrowStack-Client` header, from ``CampaignSDK/client(platform:appVersion:)``.
+    public init(publicKey: String, endpoint: URL = defaultEndpoint, client: String, session: URLSession = .shared) {
         self.url = endpoint.appending(path: publicKey)
+        self.client = client
         self.session = session
     }
 
     public func fetch(etag: String?) async throws -> CampaignFetchResult {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
         if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
+        request.setValue(client, forHTTPHeaderField: CampaignSDK.clientHeader)
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         switch status {

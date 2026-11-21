@@ -84,7 +84,9 @@ public final class CampaignEngine: CampaignEventObserving {
         clock: any CampaignClock = SystemCampaignClock(),
         images: any CampaignImagePrefetching = URLSessionImagePrefetcher()
     ) {
-        self.fetcher = fetcher ?? HTTPCampaignSetFetcher(publicKey: publicKey, endpoint: endpoint)
+        self.fetcher = fetcher ?? HTTPCampaignSetFetcher(
+            publicKey: publicKey, endpoint: endpoint,
+            client: CampaignSDK.client(platform: context.platform, appVersion: context.appVersion))
         self.storage = storage
         self.context = context
         self.person = person
