@@ -72,6 +72,33 @@ struct CampaignEngineTests {
         #expect(again.count("app_updated") == 0)
     }
 
+    @Test func appsOwnFirstSeenDateCountsWhenEarlier() async {
+        let set = Fixture.set([Fixture.campaign(["audience": ["all": [["fact": "days_since_first_seen", "gte": 7]]]])])
+        let tenDaysAgo = Fixture.start.addingTimeInterval(-10 * 86_400)
+
+        // A new state: the app's date is used from the first launch.
+        let known = Harness(firstSeenAt: tenDaysAgo)
+        await known.load(set)
+        await known.engine.receive(Fixture.paywallClosed)
+        #expect(known.engine.presenting != nil)
+
+        // The engine's own date (today) is stored first; a later launch passes the app's earlier date.
+        let storage = InMemoryCampaignStorage()
+        let first = Harness(storage: storage)
+        await first.load(set)
+        await first.engine.receive(Fixture.paywallClosed)
+        #expect(first.engine.presenting == nil)
+        let next = Harness(storage: storage, firstSeenAt: tenDaysAgo)
+        await next.load(set)
+        await next.engine.receive(Fixture.paywallClosed)
+        #expect(next.engine.presenting != nil)
+
+        // A later date never moves the stored one.
+        let later = Harness(storage: storage, firstSeenAt: Fixture.start)
+        await later.load(set)
+        #expect(await storage.loadState()?.firstSeenAt == tenDaysAgo)
+    }
+
     @Test func stateOfAnEarlierSDKCarriesTheHistoryOver() throws {
         let json = #"{"firstSeenAt":1765000000000,"history":{"shownAt":[],"campaigns":{"a-offer":{"shownCount":2}}},"reportedRejections":[]}"#
         let decoder = JSONDecoder()

@@ -188,6 +188,8 @@ public final class CampaignEngine: CampaignEventObserving {
                 set = loaded
             }
             var state = stored ?? CampaignStoredState(firstSeenAt: clock.now)
+            // The app's own first-launch date counts when it is earlier than the one stored here.
+            if let given = context.firstSeenAt, given < state.firstSeenAt { state.firstSeenAt = given }
             let current = context.appVersion
             if let last = state.lastAppVersion, let from = CampaignVersion(last), let to = CampaignVersion(current), to > from {
                 record(.appUpdated(from: last, to: current))

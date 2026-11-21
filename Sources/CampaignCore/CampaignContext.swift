@@ -15,9 +15,13 @@ public struct CampaignContext: Sendable, Equatable {
     public var region: String
     /// Where a day starts and ends, for `max_per_day`.
     public var timeZone: TimeZone
+    /// When the person first used the app, if the app knew it before this SDK (its own first-launch
+    /// date). `days_since_first_seen` counts from the earlier of this and the date the engine stored on
+    /// its own first launch. `nil`: the engine's own date only.
+    public var firstSeenAt: Date?
 
     public init(platform: String = "ios", appVersion: String, build: String, channel: String,
-                lang: String, region: String, timeZone: TimeZone = .current) {
+                lang: String, region: String, timeZone: TimeZone = .current, firstSeenAt: Date? = nil) {
         self.platform = platform
         self.appVersion = appVersion
         self.build = build
@@ -25,6 +29,7 @@ public struct CampaignContext: Sendable, Equatable {
         self.lang = lang
         self.region = region
         self.timeZone = timeZone
+        self.firstSeenAt = firstSeenAt
     }
 }
 

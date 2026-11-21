@@ -146,6 +146,7 @@ final class Harness {
          clock: FakeCampaignClock = FakeCampaignClock(Fixture.start),
          placements: [any CampaignPlacement.Type] = [TrialOfferPlacement.self],
          appVersion: String = "3.3.0",
+         firstSeenAt: Date? = nil,
          actionResult: CampaignActionResult = .completed) {
         self.fetcher = fetcher
         self.storage = storage
@@ -159,7 +160,7 @@ final class Harness {
             fetcher: fetcher,
             storage: storage,
             context: CampaignContext(appVersion: appVersion, build: "330", channel: "appstore", lang: "ja", region: "JP",
-                                     timeZone: TimeZone(identifier: "Asia/Tokyo")!),
+                                     timeZone: TimeZone(identifier: "Asia/Tokyo")!, firstSeenAt: firstSeenAt),
             person: { personBox.value },
             isInternalDevice: { internalBox.value },
             placements: placements,
