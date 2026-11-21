@@ -36,6 +36,8 @@ public struct CampaignField: Sendable, Hashable {
 public enum CampaignPlacementKind: String, Sendable, Codable {
     /// The SDK says "show this now" and the app presents it in its own way.
     case modal
+    /// The same as `modal`, presented from the bottom at about half height (the `survey` question).
+    case sheet
     /// No look of its own: showing it runs the campaign's `on_tap` action at once (the system's
     /// rating prompt). `campaign_tapped` is not recorded.
     case system

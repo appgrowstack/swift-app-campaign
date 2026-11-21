@@ -48,6 +48,8 @@ public final class CampaignEngine: CampaignEventObserving {
     @ObservationIgnored private var refreshing: Task<Void, Never>?
     @ObservationIgnored private var launchFetch: Task<Void, Never>?
     @ObservationIgnored private var pendingUpdate: CampaignObservedEvent?
+    /// `paywall_closed` was heard in this launch: `survey` campaigns wait for the next launch.
+    @ObservationIgnored private var paywallClosedThisLaunch = false
 
     private struct Waiting {
         let token: UUID
@@ -213,14 +215,16 @@ public final class CampaignEngine: CampaignEventObserving {
     /// The same as ``observe(_:_:)``, awaited: returns after the campaign was shown or skipped.
     public func receive(_ event: CampaignObservedEvent) async {
         guard Self.accepts(event.name) else { return }
+        if event.name == "paywall_closed" { paywallClosedThisLaunch = true }
         await prepare()
         if let launchFetch { await launchFetch.value } else { await refresh() }
         await decide(event)
     }
 
-    /// `campaign_*` are the SDK's own; `app_updated` comes from the SDK itself.
+    /// `campaign_*` are the SDK's own; `app_updated` comes from the SDK itself. `survey_*` are answers,
+    /// which never trigger anything.
     nonisolated static func accepts(_ name: String) -> Bool {
-        !name.hasPrefix("campaign") && name != "app_updated"
+        !name.hasPrefix("campaign") && !name.hasPrefix("survey_") && name != "app_updated"
     }
 
     private func decide(_ event: CampaignObservedEvent) async {
@@ -259,7 +263,12 @@ public final class CampaignEngine: CampaignEventObserving {
 
     private func makeInput(set: CampaignSet, state: CampaignStoredState, now: Date, event: CampaignObservedEvent,
                            internalDevice: Bool) -> CampaignDecisionInput {
-        CampaignDecisionInput(
+        // After the paywall was closed, a survey is not the next thing in this launch.
+        let set = paywallClosedThisLaunch
+            ? CampaignSet(project: set.project, version: set.version, policy: set.policy, targets: set.targets,
+                          campaigns: set.campaigns.filter { $0.type != .survey })
+            : set
+        return CampaignDecisionInput(
             set: set, registry: registry, fetchedAt: state.fetchedAt ?? .distantPast, now: now, context: context,
             internalDevice: internalDevice, person: person(),
             daysSinceFirstSeen: Self.days(from: state.firstSeenAt, to: now, in: context.timeZone),
@@ -332,7 +341,7 @@ public final class CampaignEngine: CampaignEventObserving {
         }
 
         let now = clock.now
-        if kind == .modal { presenting = presentation }
+        if kind != .system { presenting = presentation }
         sessionShown += 1
         state.history.campaigns[campaign.id, default: CampaignRecord()].count(at: now, appVersion: context.appVersion)
         state.history.shownAt = state.history.shownAt.filter { now.timeIntervalSince($0) < 2 * 86400 } + [now]
@@ -397,6 +406,29 @@ public final class CampaignEngine: CampaignEventObserving {
         await storage.saveState(state)
     }
 
+    /// A `survey` answer: `choice` is a ``CampaignTemplate/Survey/Values/choices`` id (`choice_1`…, or
+    /// `"0"`…`"<scale>"`). Records `survey_answered`, closes the sheet and runs `submit_answer`. An id the
+    /// campaign does not have is ignored. Send what was written with the support connector's `sendFeedback`.
+    public func answer(_ presentation: CampaignPresentation, choice: String) async {
+        guard presenting?.id == presentation.id, Self.isChoice(choice, of: presentation.values) else { return }
+        presenting = nil
+        record(.init(name: "survey_answered", parameters: [
+            "campaign": .string(presentation.campaign), "set_version": .int(presentation.setVersion),
+            "choice": .string(choice),
+        ]))
+        await complete(presentation, tapped: true)
+    }
+
+    /// Whether `choice` is one of the campaign's answers.
+    nonisolated static func isChoice(_ choice: String, of values: [String: CampaignResolvedValue]) -> Bool {
+        if case .int(let scale)? = values["scale"] {
+            guard let n = Int(choice), String(n) == choice else { return false }
+            return (0...max(0, scale)).contains(n)
+        }
+        guard choice.hasPrefix("choice_"), let n = Int(choice.dropFirst(7)), (1...6).contains(n) else { return false }
+        return values[choice] != nil
+    }
+
     /// Any way of closing without the primary button.
     public func dismiss(_ presentation: CampaignPresentation, via: CampaignDismissal) async {
         guard presenting?.id == presentation.id else { return }
@@ -418,6 +450,7 @@ public final class CampaignEngine: CampaignEventObserving {
         return CampaignOffer(
             presentation: presentation, values: values,
             tap: { [weak self] in Task { await self?.tap(presentation) } },
+            answer: { [weak self] choice in Task { await self?.answer(presentation, choice: choice) } },
             dismiss: { [weak self] via in Task { await self?.dismiss(presentation, via: via) } }
         )
     }

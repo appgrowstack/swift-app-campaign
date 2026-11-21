@@ -24,6 +24,7 @@ public enum CampaignType: String, Sendable, Hashable, Codable, CaseIterable {
     case reviewAsk = "review_ask"
     case whatsNew = "whats_new"
     case crossPromo = "cross_promo"
+    case survey
     case custom
 }
 

@@ -17,18 +17,25 @@ struct CampaignManifestTests {
         #expect(try CampaignManifest(contentsOf: Self.manifest).project == "gamification-app")
     }
 
+    /// The case manifests: gamification-app has the first four types, reading-memory has `survey`.
+    static let manifests = ["gamification-app", "reading-memory"].map {
+        Bundle.module.url(forResource: "Cases", withExtension: nil)!.appending(path: "inapp/manifests/\($0).json")
+    }
+
     @Test func templatesAreTheManifestsDefaults() throws {
-        let manifest = try CampaignManifest(contentsOf: Self.manifest)
-        #expect(manifest.templateDifferences.isEmpty)
-        let registry = manifest.registry
+        let manifests = try Self.manifests.map(CampaignManifest.init(contentsOf:))
+        for manifest in manifests { #expect(manifest.templateDifferences.isEmpty, "\(manifest.project)") }
         for type in CampaignType.allCases {
             guard let placement = CampaignTemplate.placement(for: type) else { continue }
+            // Each type is declared in one of the case manifests.
+            let registry = try #require(manifests.first { $0.placements[placement.name] != nil }, "\(type)").registry
             #expect(registry.placements[placement.name] == CampaignPlacementSpec(placement), "\(type)")
             for (name, args) in CampaignTemplate.actions(for: type) {
                 #expect(registry.actions[name] == args, "\(name)")
             }
         }
-        #expect(registry.placements["review_ask"]?.kind == .system)
+        #expect(try manifests[0].registry.placements["review_ask"]?.kind == .system)
+        #expect(try manifests[1].registry.placements["survey"]?.kind == .sheet)
     }
 
     @Test func aTemplatePlacementThatDiffersIsListed() throws {

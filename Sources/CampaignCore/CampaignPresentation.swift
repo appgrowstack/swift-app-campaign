@@ -28,6 +28,9 @@ public struct CampaignOffer<Placement: CampaignPlacement>: Identifiable {
     public let values: Placement.Values
     /// The primary button: runs the campaign's action or opens its link.
     public let tap: @MainActor () -> Void
+    /// A `survey` answer (``CampaignTemplate/Survey/Values/choices`` id). Records `survey_answered`, then
+    /// closes like `tap`.
+    public let answer: @MainActor (String) -> Void
     /// Any way of closing: the secondary button, a close button, a swipe, a tap outside.
     public let dismiss: @MainActor (CampaignDismissal) -> Void
 

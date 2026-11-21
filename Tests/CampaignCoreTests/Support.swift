@@ -100,6 +100,23 @@ enum Fixture {
         ])
     }
 
+    static let bookAdded = CampaignObservedEvent(name: "book_added")
+
+    static func survey(_ values: [String: Any]? = nil) -> [String: Any] {
+        campaign([
+            "id": "survey-why-not-premium", "type": "survey", "holdout": 0, "audience": NSNull(),
+            "triggers": [["id": "after_book_added", "event": "book_added", "where": NSNull(), "wait_seconds": 0]],
+            "limits": ["max_shown": 1, "min_hours_between": 0, "after_dismiss_days": 30, "after_action_days": NSNull()],
+            "show": ["placement": "survey", "values": values ?? [
+                "question": ["ja": "今は Premium にしない理由は？"],
+                "choice_1": ["ja": "値段"], "choice_2": ["ja": "まだ分からない"], "choice_3": ["ja": "ほか"],
+                "free_text": true,
+            ]],
+            "on_tap": ["action": "submit_answer", "args": [String: Any]()],
+            "goals": [["event": "survey_answered", "where": NSNull(), "within_hours": 1]],
+        ])
+    }
+
     static var readingMemory: [String: Any] { [
         "reading-memory": ["name": "読書メモリー", "ios": ["asc_app_id": "6740000000"]],
     ] }
@@ -159,6 +176,7 @@ final class Harness {
                     return actionResult
                 },
                 .requestReview { reviews.value += 1 },
+                .submitAnswer(),
                 .openStorePage(providerToken: "118079") { url in
                     opened.value.append(url)
                     return true

@@ -442,4 +442,82 @@ struct CampaignEngineTests {
         #expect(await harness.engine.presentForDebug(campaign: Fixture.id))
         #expect(harness.engine.offer(TrialOfferPlacement.self) != nil)
     }
+
+    // MARK: - Survey
+
+    @Test func surveyIsASheetAndAnAnswerIsRecordedOnce() async throws {
+        let harness = Harness(placements: [CampaignTemplate.Survey.self])
+        await harness.load(Fixture.set([Fixture.survey()]))
+        await harness.engine.receive(Fixture.bookAdded)
+
+        let offer = try #require(harness.engine.offer(CampaignTemplate.Survey.self))
+        #expect(offer.values.question == "今は Premium にしない理由は？")
+        #expect(offer.values.choices.map({ $0.id }) == ["choice_1", "choice_2", "choice_3"])
+        #expect(offer.values.asksForText)
+
+        // An id the campaign does not have is ignored and the sheet stays.
+        await harness.engine.answer(offer.presentation, choice: "choice_5")
+        await harness.engine.answer(offer.presentation, choice: "7")
+        #expect(harness.engine.presenting != nil)
+        #expect(harness.count("survey_answered") == 0)
+
+        await harness.engine.answer(offer.presentation, choice: "choice_2")
+        #expect(harness.engine.presenting == nil)
+        #expect(harness.recorder.events(named: "survey_answered").map(\.stringParameters) == [
+            ["campaign": "survey-why-not-premium", "set_version": "1", "choice": "choice_2"],
+        ])
+        #expect(harness.recorder.events(named: "campaign_action_completed").map(\.stringParameters) == [
+            ["campaign": "survey-why-not-premium", "set_version": "1", "trigger": "after_book_added", "action": "submit_answer", "result": "completed"],
+        ])
+        // Answering twice does nothing; max_shown 1 keeps it from coming back.
+        await harness.engine.answer(offer.presentation, choice: "choice_1")
+        await harness.later(60, event: Fixture.bookAdded)
+        #expect(harness.count("survey_answered") == 1)
+        #expect(harness.engine.presenting == nil)
+    }
+
+    @Test func surveyScaleAnswersAreNumbersUpToTheScale() async throws {
+        let harness = Harness(placements: [CampaignTemplate.Survey.self])
+        await harness.load(Fixture.set([Fixture.survey([
+            "question": ["ja": "友達に勧めますか？"], "choice_1": ["ja": "勧めない"], "choice_2": ["ja": "勧める"], "scale": 10,
+        ])]))
+        await harness.engine.receive(Fixture.bookAdded)
+        let offer = try #require(harness.engine.offer(CampaignTemplate.Survey.self))
+        #expect(offer.values.choices.count == 11)
+        #expect(offer.values.choices.first?.label == "勧めない")
+        #expect(offer.values.choices.last?.label == "勧める")
+        await harness.engine.answer(offer.presentation, choice: "11")
+        await harness.engine.answer(offer.presentation, choice: "choice_1")
+        #expect(harness.count("survey_answered") == 0)
+        await harness.engine.answer(offer.presentation, choice: "10")
+        #expect(harness.recorder.events(named: "survey_answered").first?.stringParameters["choice"] == "10")
+    }
+
+    @Test func noSurveyInTheLaunchThePaywallWasClosed() async throws {
+        let storage = InMemoryCampaignStorage()
+        let clock = FakeCampaignClock(Fixture.start)
+        let set = Fixture.set([Fixture.survey()])
+        let first = Harness(storage: storage, clock: clock, placements: [CampaignTemplate.Survey.self])
+        await first.load(set)
+        await first.engine.receive(Fixture.paywallClosed)
+        await first.engine.receive(Fixture.bookAdded)
+        #expect(first.engine.presenting == nil)
+        #expect(first.count("campaign_eligible") == 0)
+
+        // The next launch asks.
+        let next = Harness(storage: storage, clock: clock, placements: [CampaignTemplate.Survey.self])
+        await next.load(set)
+        await next.engine.receive(Fixture.bookAdded)
+        #expect(next.engine.offer(CampaignTemplate.Survey.self) != nil)
+    }
+
+    @Test func surveyAnswersNeverTrigger() async {
+        let harness = Harness(placements: [CampaignTemplate.Survey.self])
+        var survey = Fixture.survey()
+        survey["triggers"] = [["id": "answered", "event": "survey_answered", "where": NSNull(), "wait_seconds": 0]]
+        await harness.load(Fixture.set([survey]))
+        await harness.engine.receive(CampaignObservedEvent(name: "survey_answered", props: ["choice": "choice_1"]))
+        #expect(harness.engine.presenting == nil)
+        #expect(harness.count("campaign_eligible") == 0)
+    }
 }
