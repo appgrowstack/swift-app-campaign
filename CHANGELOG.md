@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-21
+
 ### Changed
 
 - **Breaking.** `CampaignEngine(fetcher:…)` takes where the set comes from and no longer takes a

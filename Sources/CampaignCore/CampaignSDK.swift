@@ -5,6 +5,6 @@ import Foundation
 public enum CampaignSDK {
     /// The package name (`swift-app-campaign`).
     public static let name = "swift-app-campaign"
-    /// The released version. `scripts/publish-sdk.sh` refuses to publish when this differs from the tag.
-    public static let version = "0.2.0"
+    /// The released version: the newest `## [x.y.z]` section of the CHANGELOG (a test checks it).
+    public static let version = "0.3.0"
 }
