@@ -161,6 +161,51 @@
     "outcomes": {
       "trial-2days-after-feature": "no_trigger"
     },
-    "records": []
+    "records": [],
+    "trace": [
+      {
+        "campaign": "trial-2days-after-feature",
+        "set_version": 7,
+        "event": {
+          "name": "habit_completed",
+          "at": "2026-12-10T12:00:00+09:00"
+        },
+        "outcome": "no_trigger",
+        "steps": [
+          {
+            "step": 1,
+            "name": "fresh",
+            "result": "pass"
+          },
+          {
+            "step": 2,
+            "name": "readable",
+            "result": "pass"
+          },
+          {
+            "step": 3,
+            "name": "active",
+            "result": "pass"
+          },
+          {
+            "step": 4,
+            "name": "trigger",
+            "result": "stop",
+            "detail": {
+              "triggers": [
+                {
+                  "trigger": "after_paywall",
+                  "result": "other_event"
+                },
+                {
+                  "trigger": "after_exchange",
+                  "result": "other_event"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
   }
 }

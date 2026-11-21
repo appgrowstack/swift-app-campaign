@@ -152,6 +152,59 @@
       "trial-2nd-after-14-days": "audience"
     },
     "records": [],
-    "server_facts_read": []
+    "server_facts_read": [],
+    "trace": [
+      {
+        "campaign": "trial-2nd-after-14-days",
+        "set_version": 7,
+        "event": {
+          "name": "exchange_completed",
+          "at": "2026-12-10T12:00:00+09:00"
+        },
+        "outcome": "audience",
+        "steps": [
+          {
+            "step": 1,
+            "name": "fresh",
+            "result": "pass"
+          },
+          {
+            "step": 2,
+            "name": "readable",
+            "result": "pass"
+          },
+          {
+            "step": 3,
+            "name": "active",
+            "result": "pass"
+          },
+          {
+            "step": 4,
+            "name": "trigger",
+            "result": "pass",
+            "detail": {
+              "trigger": "after_exchange"
+            }
+          },
+          {
+            "step": 5,
+            "name": "limits",
+            "result": "pass"
+          },
+          {
+            "step": 6,
+            "name": "device_audience",
+            "result": "stop",
+            "detail": {
+              "path": "audience.all[1]",
+              "fact": "days_since_trial_ended",
+              "op": "gte",
+              "want": 14,
+              "got": 10
+            }
+          }
+        ]
+      }
+    ]
   }
 }

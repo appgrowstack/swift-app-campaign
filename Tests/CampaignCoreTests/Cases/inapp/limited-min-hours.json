@@ -171,6 +171,51 @@
     "outcomes": {
       "trial-2days-after-feature": "limited:min_hours_between"
     },
-    "records": []
+    "records": [],
+    "trace": [
+      {
+        "campaign": "trial-2days-after-feature",
+        "set_version": 7,
+        "event": {
+          "name": "paywall_closed",
+          "at": "2026-12-10T12:00:00+09:00"
+        },
+        "outcome": "limited:min_hours_between",
+        "steps": [
+          {
+            "step": 1,
+            "name": "fresh",
+            "result": "pass"
+          },
+          {
+            "step": 2,
+            "name": "readable",
+            "result": "pass"
+          },
+          {
+            "step": 3,
+            "name": "active",
+            "result": "pass"
+          },
+          {
+            "step": 4,
+            "name": "trigger",
+            "result": "pass",
+            "detail": {
+              "trigger": "after_paywall"
+            }
+          },
+          {
+            "step": 5,
+            "name": "limits",
+            "result": "stop",
+            "detail": {
+              "limit": "min_hours_between",
+              "next_allowed_at": "2026-12-11T02:00:00+09:00"
+            }
+          }
+        ]
+      }
+    ]
   }
 }

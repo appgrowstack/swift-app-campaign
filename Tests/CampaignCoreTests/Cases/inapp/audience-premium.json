@@ -165,6 +165,59 @@
       "trial-2days-after-feature": "audience"
     },
     "records": [],
-    "server_facts_read": []
+    "server_facts_read": [],
+    "trace": [
+      {
+        "campaign": "trial-2days-after-feature",
+        "set_version": 7,
+        "event": {
+          "name": "paywall_closed",
+          "at": "2026-12-10T12:00:00+09:00"
+        },
+        "outcome": "audience",
+        "steps": [
+          {
+            "step": 1,
+            "name": "fresh",
+            "result": "pass"
+          },
+          {
+            "step": 2,
+            "name": "readable",
+            "result": "pass"
+          },
+          {
+            "step": 3,
+            "name": "active",
+            "result": "pass"
+          },
+          {
+            "step": 4,
+            "name": "trigger",
+            "result": "pass",
+            "detail": {
+              "trigger": "after_paywall"
+            }
+          },
+          {
+            "step": 5,
+            "name": "limits",
+            "result": "pass"
+          },
+          {
+            "step": 6,
+            "name": "device_audience",
+            "result": "stop",
+            "detail": {
+              "path": "audience.all[0]",
+              "fact": "is_premium",
+              "op": "eq",
+              "want": false,
+              "got": true
+            }
+          }
+        ]
+      }
+    ]
   }
 }

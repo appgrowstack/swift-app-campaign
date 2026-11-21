@@ -255,6 +255,116 @@
           "side": "treatment"
         }
       }
+    ],
+    "trace": [
+      {
+        "campaign": "trial-2days-after-feature",
+        "set_version": 7,
+        "event": {
+          "name": "paywall_closed",
+          "at": "2026-12-10T12:00:00+09:00"
+        },
+        "outcome": "rejected:unknown_fact",
+        "steps": [
+          {
+            "step": 1,
+            "name": "fresh",
+            "result": "pass"
+          },
+          {
+            "step": 2,
+            "name": "readable",
+            "result": "stop",
+            "detail": {
+              "reason": "unknown_fact"
+            }
+          }
+        ]
+      },
+      {
+        "campaign": "aaa-offer",
+        "set_version": 7,
+        "event": {
+          "name": "paywall_closed",
+          "at": "2026-12-10T12:00:00+09:00"
+        },
+        "outcome": "show",
+        "steps": [
+          {
+            "step": 1,
+            "name": "fresh",
+            "result": "pass"
+          },
+          {
+            "step": 2,
+            "name": "readable",
+            "result": "pass"
+          },
+          {
+            "step": 3,
+            "name": "active",
+            "result": "pass"
+          },
+          {
+            "step": 4,
+            "name": "trigger",
+            "result": "pass",
+            "detail": {
+              "trigger": "after_paywall"
+            }
+          },
+          {
+            "step": 5,
+            "name": "limits",
+            "result": "pass"
+          },
+          {
+            "step": 6,
+            "name": "device_audience",
+            "result": "pass"
+          },
+          {
+            "step": 7,
+            "name": "server_audience",
+            "result": "pass"
+          },
+          {
+            "step": 8,
+            "name": "holdout",
+            "result": "pass",
+            "detail": {
+              "unit": 0.77353,
+              "holdout": 0.2,
+              "side": "treatment"
+            }
+          },
+          {
+            "step": 9,
+            "name": "priority",
+            "result": "pass"
+          },
+          {
+            "step": 10,
+            "name": "content",
+            "result": "pass"
+          },
+          {
+            "step": 11,
+            "name": "wait",
+            "result": "pass"
+          },
+          {
+            "step": 11.5,
+            "name": "recheck",
+            "result": "pass"
+          },
+          {
+            "step": 12,
+            "name": "show",
+            "result": "pass"
+          }
+        ]
+      }
     ]
   }
 }

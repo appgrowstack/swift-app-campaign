@@ -150,6 +150,55 @@
           "reason": "type_mismatch"
         }
       }
+    ],
+    "trace": [
+      {
+        "campaign": "trial-2days-after-feature",
+        "set_version": 7,
+        "event": {
+          "name": "habit_achieved",
+          "at": "2026-12-10T12:00:00+09:00"
+        },
+        "outcome": "no_trigger",
+        "steps": [
+          {
+            "step": 1,
+            "name": "fresh",
+            "result": "pass"
+          },
+          {
+            "step": 2,
+            "name": "readable",
+            "result": "pass"
+          },
+          {
+            "step": 3,
+            "name": "active",
+            "result": "pass"
+          },
+          {
+            "step": 4,
+            "name": "trigger",
+            "result": "stop",
+            "detail": {
+              "triggers": [
+                {
+                  "trigger": "moment",
+                  "result": "where_failed",
+                  "miss": {
+                    "path": "triggers[0].where",
+                    "prop": "count",
+                    "op": "gte",
+                    "want": 3,
+                    "got": "<文字列 1文字>",
+                    "type_mismatch": true
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
     ]
   }
 }

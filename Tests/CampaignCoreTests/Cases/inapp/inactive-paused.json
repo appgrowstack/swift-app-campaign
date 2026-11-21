@@ -164,6 +164,39 @@
     "outcomes": {
       "trial-2days-after-feature": "inactive:status"
     },
-    "records": []
+    "records": [],
+    "trace": [
+      {
+        "campaign": "trial-2days-after-feature",
+        "set_version": 7,
+        "event": {
+          "name": "paywall_closed",
+          "at": "2026-12-10T12:00:00+09:00"
+        },
+        "outcome": "inactive:status",
+        "steps": [
+          {
+            "step": 1,
+            "name": "fresh",
+            "result": "pass"
+          },
+          {
+            "step": 2,
+            "name": "readable",
+            "result": "pass"
+          },
+          {
+            "step": 3,
+            "name": "active",
+            "result": "stop",
+            "detail": {
+              "inactive": "status",
+              "want": "active",
+              "got": "paused"
+            }
+          }
+        ]
+      }
+    ]
   }
 }

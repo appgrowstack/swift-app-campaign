@@ -172,6 +172,29 @@
           "hours": 73
         }
       }
+    ],
+    "trace": [
+      {
+        "campaign": "trial-2days-after-feature",
+        "set_version": 7,
+        "event": {
+          "name": "paywall_closed",
+          "at": "2026-12-10T12:00:00+09:00"
+        },
+        "outcome": "stale",
+        "steps": [
+          {
+            "step": 1,
+            "name": "fresh",
+            "result": "stop",
+            "detail": {
+              "fetched_at": "2026-12-07T11:00:00+09:00",
+              "age_hours": 73,
+              "cache_hours": 72
+            }
+          }
+        ]
+      }
     ]
   }
 }
