@@ -47,8 +47,8 @@ public final class CampaignEngine: CampaignEventObserving {
     @ObservationIgnored private var refreshing: Task<Void, Never>?
     @ObservationIgnored private var launchFetch: Task<Void, Never>?
     @ObservationIgnored private var pendingUpdate: CampaignObservedEvent?
-    /// `paywall_closed` was heard in this launch: `survey` campaigns wait for the next launch.
-    @ObservationIgnored private var paywallClosedThisLaunch = false
+    /// Events heard in this launch that some campaign's `not_after_in_launch` matches, oldest first.
+    @ObservationIgnored private var launchEvents: [CampaignObservedEvent] = []
 
     private struct Waiting {
         let token: UUID
@@ -212,10 +212,13 @@ public final class CampaignEngine: CampaignEventObserving {
     /// The same as ``observe(_:_:)``, awaited: returns after the campaign was shown or skipped.
     public func receive(_ event: CampaignObservedEvent) async {
         guard Self.accepts(event.name) else { return }
-        if event.name == "paywall_closed" { paywallClosedThisLaunch = true }
+        // The events before this one. Kept before waiting for the set, so an event heard meanwhile counts.
+        // Before the first set is on hand, every event is kept (it is checked again against the set).
+        let earlier = launchEvents
+        if set.map({ CampaignRules.remembersInLaunch($0, event) }) ?? true { launchEvents.append(event) }
         await prepare()
         if let launchFetch { await launchFetch.value } else { await refresh() }
-        await decide(event)
+        await decide(event, earlier: earlier)
     }
 
     /// `campaign_*` are the SDK's own; `app_updated` comes from the SDK itself. `survey_*` are answers,
@@ -224,11 +227,13 @@ public final class CampaignEngine: CampaignEventObserving {
         !name.hasPrefix("campaign") && !name.hasPrefix("survey_") && name != "app_updated"
     }
 
-    private func decide(_ event: CampaignObservedEvent) async {
+    /// - Parameter earlier: the launch events heard before this one; all of them when `nil`.
+    private func decide(_ event: CampaignObservedEvent, earlier: [CampaignObservedEvent]? = nil) async {
         guard let state, let set, state.fetchedAt != nil else { return }
         let now = clock.now
         let internalDevice = isInternalDevice()
-        let input = makeInput(set: set, state: state, now: now, event: event, internalDevice: internalDevice)
+        let input = makeInput(set: set, state: state, now: now, event: event, internalDevice: internalDevice,
+                              launchEvents: earlier ?? launchEvents)
         let facts = self.facts
         let decision = await CampaignRules.decide(input) { name in
             guard let fact = facts[name] else { return nil }
@@ -259,18 +264,14 @@ public final class CampaignEngine: CampaignEventObserving {
     }
 
     private func makeInput(set: CampaignSet, state: CampaignStoredState, now: Date, event: CampaignObservedEvent,
-                           internalDevice: Bool) -> CampaignDecisionInput {
-        // After the paywall was closed, a survey is not the next thing in this launch.
-        let set = paywallClosedThisLaunch
-            ? CampaignSet(project: set.project, version: set.version, policy: set.policy, targets: set.targets,
-                          campaigns: set.campaigns.filter { $0.type != .survey }, allocations: set.allocations)
-            : set
-        return CampaignDecisionInput(
+                           internalDevice: Bool, launchEvents: [CampaignObservedEvent]) -> CampaignDecisionInput {
+        CampaignDecisionInput(
             set: set, registry: registry, fetchedAt: state.fetchedAt ?? .distantPast, now: now, context: context,
             internalDevice: internalDevice, person: person(),
             daysSinceFirstSeen: Self.days(from: state.firstSeenAt, to: now, in: context.timeZone),
             sessionSeconds: max(0, Int(now.timeIntervalSince(launchedAt))),
-            history: state.history, sessionShown: sessionShown, event: event, texts: texts,
+            history: state.history, sessionShown: sessionShown,
+            launchEvents: launchEvents.filter { CampaignRules.remembersInLaunch(set, $0) }, event: event, texts: texts,
             imagesReady: imageCache.ready, sides: state.sides
         )
     }
@@ -314,8 +315,10 @@ public final class CampaignEngine: CampaignEventObserving {
 
         // C4: the set and the counts may have changed while waiting.
         guard let set, let state else { return }
+        // Events heard while waiting count too.
         let recheck = CampaignRules.recheck(selection, makeInput(
-            set: set, state: state, now: clock.now, event: event, internalDevice: isInternalDevice()
+            set: set, state: state, now: clock.now, event: event, internalDevice: isInternalDevice(),
+            launchEvents: launchEvents
         ))
         recheck.records.forEach(record)
         guard let shown = recheck.shown else { return }
@@ -470,7 +473,7 @@ public final class CampaignEngine: CampaignEventObserving {
         await prepare()
         guard let set, let state, let campaign = set.campaigns.first(where: { $0.id == id }) else { return false }
         var input = makeInput(set: set, state: state, now: clock.now, event: CampaignObservedEvent(name: "debug"),
-                              internalDevice: true)
+                              internalDevice: true, launchEvents: [])
         input.history = .init()
         guard case .success(let values) = CampaignRules.resolveValues(campaign, input) else { return false }
         let presentation = CampaignPresentation(

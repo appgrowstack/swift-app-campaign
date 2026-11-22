@@ -106,7 +106,8 @@ enum Fixture {
         campaign([
             "id": "survey-why-not-premium", "type": "survey", "holdout": 0, "audience": NSNull(),
             "triggers": [["id": "after_book_added", "event": "book_added", "where": NSNull(), "wait_seconds": 0]],
-            "limits": ["max_shown": 1, "min_hours_between": 0, "after_dismiss_days": 30, "after_action_days": NSNull()],
+            "limits": ["max_shown": 1, "min_hours_between": 0, "after_dismiss_days": 30, "after_action_days": NSNull(),
+                       "not_after_in_launch": [["event": "paywall_closed", "where": NSNull()]]],
             "show": ["placement": "survey", "values": values ?? [
                 "question": ["ja": "今は Premium にしない理由は？"],
                 "choice_1": ["ja": "値段"], "choice_2": ["ja": "まだ分からない"], "choice_3": ["ja": "ほか"],

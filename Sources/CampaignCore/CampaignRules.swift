@@ -30,6 +30,7 @@ public enum CampaignOutcome: Sendable, Equatable, CustomStringConvertible {
         case maxShown = "max_shown", maxPerAppVersion = "max_per_app_version"
         case minHoursBetween = "min_hours_between"
         case afterDismiss = "after_dismiss", afterAction = "after_action"
+        case notAfterInLaunch = "not_after_in_launch"
         case maxPerSession = "max_per_session", maxPerDay = "max_per_day"
     }
 
@@ -102,6 +103,9 @@ public struct CampaignDecisionInput: Sendable {
     public var sessionSeconds: Int
     public var history: CampaignHistory
     public var sessionShown: Int
+    /// Events heard earlier in this launch, oldest first. The engine keeps only those some campaign's
+    /// `not_after_in_launch` matches (``CampaignRules/remembersInLaunch(_:_:)``).
+    public var launchEvents: [CampaignObservedEvent]
     public var event: CampaignObservedEvent
     /// The app's strings table: `<text_key>.<value name>` → text in the app's language.
     public var texts: @Sendable (String) -> String?
@@ -111,7 +115,8 @@ public struct CampaignDecisionInput: Sendable {
 
     public init(set: CampaignSet, registry: CampaignRegistry, fetchedAt: Date, now: Date, context: CampaignContext,
                 internalDevice: Bool = false, person: String, daysSinceFirstSeen: Int, sessionSeconds: Int = 0,
-                history: CampaignHistory, sessionShown: Int, event: CampaignObservedEvent,
+                history: CampaignHistory, sessionShown: Int, launchEvents: [CampaignObservedEvent] = [],
+                event: CampaignObservedEvent,
                 texts: @escaping @Sendable (String) -> String? = { _ in nil },
                 imagesReady: Set<URL> = [], sides: [String: CampaignSide] = [:]) {
         self.set = set
@@ -125,6 +130,7 @@ public struct CampaignDecisionInput: Sendable {
         self.sessionSeconds = sessionSeconds
         self.history = history
         self.sessionShown = sessionShown
+        self.launchEvents = launchEvents
         self.event = event
         self.texts = texts
         self.imagesReady = imagesReady
@@ -367,12 +373,39 @@ public enum CampaignRules {
             guard let days = limits.afterActionDays else { return .afterAction }
             if now.timeIntervalSince(completed) < days * 86400 { return .afterAction }
         }
+        if input.launchEvents.contains(where: { matches(limits.notAfterInLaunch, $0) }) { return .notAfterInLaunch }
         if input.sessionShown >= input.set.policy.maxPerSession { return .maxPerSession }
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = input.context.timeZone
         let today = input.history.shownAt.filter { calendar.isDate($0, inSameDayAs: now) }.count
         if today >= input.set.policy.maxPerDay { return .maxPerDay }
         return nil
+    }
+
+    /// Whether the engine keeps this event for the rest of the launch: only events some campaign's
+    /// `not_after_in_launch` matches, handed to the next decisions as ``CampaignDecisionInput/launchEvents``.
+    public static func remembersInLaunch(_ set: CampaignSet, _ event: CampaignObservedEvent) -> Bool {
+        set.campaigns.contains { matches($0.limits.notAfterInLaunch, event) }
+    }
+
+    /// The event has one of the names, and its props pass that `where`. A type mismatch does not match
+    /// (and is not recorded).
+    static func matches(_ forms: [CampaignLaunchEvent], _ event: CampaignObservedEvent) -> Bool {
+        forms.contains { form in
+            guard form.event == event.name else { return false }
+            guard let condition = form.condition else { return true }
+            return propsMatch(condition, event.props)
+        }
+    }
+
+    /// `where` on an event's props, without facts (a `where` only has props).
+    private static func propsMatch(_ condition: CampaignCondition, _ props: [String: CampaignValue]) -> Bool {
+        switch condition {
+        case .all(let children): children.allSatisfy { propsMatch($0, props) }
+        case .any(let children): children.contains { propsMatch($0, props) }
+        case .leaf(.prop(let name), let op): op.matches(props[name].map(CampaignLookup.value) ?? .unavailable) ?? false
+        case .leaf(.fact, _): false
+        }
     }
 
     /// With a variant, its values are laid over the campaign's and its `text_key` (when set) is used.
