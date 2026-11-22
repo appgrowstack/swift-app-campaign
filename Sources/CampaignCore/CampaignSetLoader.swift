@@ -116,16 +116,11 @@ public enum CampaignSetLoader {
               object["purpose"]?.string != nil,
               let priority = object["priority"]?.int,
               let platforms = object["platforms"]?.array?.compactMap(\.string), !platforms.isEmpty,
-              let versionObject = object["app_version"]?.object, !versionObject.isEmpty,
+              let appVersion = ResolvedVersionRange.platforms(object["app_version"]),
               let goals = object["goals"]?.array, !goals.isEmpty,
               let holdout = object["holdout"]?.number, (0...0.5).contains(holdout)
         else { throw .invalid }
 
-        var appVersion: [String: VersionRange] = [:]
-        for (platform, value) in versionObject {
-            guard let text = value.string, let range = VersionRange(text) else { throw .invalid }
-            appVersion[platform] = range
-        }
         let channels = try channelsOf(object["channels"])
         let startsAt = try timestamp(object, "starts_at")
         let endsAt = try timestamp(object, "ends_at")

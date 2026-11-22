@@ -37,7 +37,8 @@ public struct Campaign: Sendable, Equatable {
     public let placement: String
     let status: String
     let platforms: [String]
-    let appVersion: [String: VersionRange]
+    /// Platform → the range core resolved from `requires`. A platform without one is not shown.
+    let appVersion: [String: ResolvedVersionRange]
     let channels: [String]
     let startsAt: Date?
     let endsAt: Date?

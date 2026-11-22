@@ -29,31 +29,55 @@ public struct CampaignVersion: Sendable, Hashable, Comparable, CustomStringConve
     public var description: String { "\(major).\(minor).\(patch)" }
 }
 
-/// `">=3.3.0"` or `">=3.3.0 <4.0.0"`, and nothing else.
-struct VersionRange: Sendable, Equatable {
-    let lower: CampaignVersion
-    let upper: CampaignVersion?
+extension CampaignVersion {
+    /// The form a set writes (`appVersion` in the schema): two or three groups of ASCII digits,
+    /// such as `3.3` or `3.3.0`. Stricter than ``init(_:)``, which reads the device's version.
+    init?(appVersion text: String) {
+        let parts = text.split(separator: ".", omittingEmptySubsequences: false)
+        guard (2...3).contains(parts.count),
+              parts.allSatisfy({ part in !part.isEmpty && part.allSatisfy { ("0"..."9").contains($0) } }) else { return nil }
+        self.init(text)
+    }
+}
 
-    init?(_ text: String) {
-        let parts = text.split(separator: " ", omittingEmptySubsequences: false)
-        guard (1...2).contains(parts.count),
-              parts[0].hasPrefix(">="),
-              let lower = Self.strict(parts[0].dropFirst(2)) else { return nil }
-        self.lower = lower
-        if parts.count == 2 {
-            guard parts[1].hasPrefix("<"), let upper = Self.strict(parts[1].dropFirst()) else { return nil }
-            self.upper = upper
-        } else {
-            self.upper = nil
+/// One platform's range in a set's `app_version`, resolved by core from the campaign's `requires`:
+/// every version from `min` up, except the ones in `exclude`.
+struct ResolvedVersionRange: Sendable, Equatable {
+    let min: CampaignVersion
+    let exclude: [CampaignVersion]
+
+    /// `{ "min": "3.3.0", "exclude": ["3.4.0"] }`. Other keys are ignored.
+    init?(_ json: JSONValue) {
+        guard let object = json.object,
+              let min = object["min"]?.string.flatMap(CampaignVersion.init(appVersion:)),
+              let items = object["exclude"]?.array else { return nil }
+        var exclude: [CampaignVersion] = []
+        for item in items {
+            guard let version = item.string.flatMap(CampaignVersion.init(appVersion:)) else { return nil }
+            exclude.append(version)
         }
+        self.init(min: min, exclude: exclude)
     }
 
+    init(min: CampaignVersion, exclude: [CampaignVersion] = []) {
+        self.min = min
+        self.exclude = exclude
+    }
+
+    /// `min` or newer, and not one of `exclude` (missing parts count as zero, so `3.4` is `3.4.0`).
     func contains(_ version: CampaignVersion) -> Bool {
-        version >= lower && (upper.map { version < $0 } ?? true)
+        version >= min && !exclude.contains(version)
     }
 
-    private static func strict(_ text: Substring) -> CampaignVersion? {
-        guard text.split(separator: ".", omittingEmptySubsequences: false).count == 3 else { return nil }
-        return CampaignVersion(String(text))
+    /// The whole `app_version` (platform → range). `nil` unless every value is a readable range;
+    /// an empty object is valid and matches no platform.
+    static func platforms(_ json: JSONValue?) -> [String: ResolvedVersionRange]? {
+        guard let object = json?.object else { return nil }
+        var ranges: [String: ResolvedVersionRange] = [:]
+        for (platform, value) in object {
+            guard let range = ResolvedVersionRange(value) else { return nil }
+            ranges[platform] = range
+        }
+        return ranges
     }
 }

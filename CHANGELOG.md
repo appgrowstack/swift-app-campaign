@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** a campaign's `app_version` is now the range the server resolved from what each build
+  contains: per platform `{ "min": "<version>", "exclude": ["<version>", …] }`, each version two or
+  three groups of digits (`3.3`, `3.3.0`). It is required; `{}` is valid and matches no platform.
+  The old string form (`">=3.3.0 <4.0.0"`) and any unreadable range reject the campaign as `invalid`.
+  A device version is in range when it is `min` or newer and not one of `exclude` (`3.4` equals
+  `3.4.0`). The set's top-level `releases` is ignored.
+
 ### Added
 
 - Campaign variants (R10 P5): a campaign's optional `variants` (two, each `id`, `values`, optional

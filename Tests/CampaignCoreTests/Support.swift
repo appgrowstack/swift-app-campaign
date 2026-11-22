@@ -29,7 +29,7 @@ enum Fixture {
         var campaign: [String: Any] = [
             "schema_version": 1, "id": id, "type": "trial_offer", "status": "active", "title": "2日間を勧める", "purpose": "比べる",
             "priority": 50, "platforms": ["ios", "android"],
-            "app_version": ["ios": ">=3.3.0", "android": ">=3.3.0"],
+            "app_version": ["ios": ["min": "3.3.0", "exclude": []], "android": ["min": "3.3.0", "exclude": []]],
             "starts_at": "2026-12-01T00:00:00+09:00", "ends_at": NSNull(),
             "triggers": [
                 ["id": "after_paywall", "event": "paywall_closed",

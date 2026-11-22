@@ -23,6 +23,11 @@ that triggers it, who it is for, how often, and who is held out for comparison.
   no trigger, limits, device conditions, server conditions, holdout, priority, text and images
 - **Checked again after waiting.** A campaign waits while another full screen is up; then the set
   and the counts are read again, so a campaign stopped, paused or ended meanwhile is not shown
+- **Versions resolved from what each build contains.** A campaign's `app_version` is never written by
+  hand: the server resolves the features the campaign requires into, per platform, a lowest version
+  `min` and the versions to leave out `exclude` (`{ "ios": { "min": "3.3.0", "exclude": ["3.4.0"] } }`).
+  The device only checks its version against that range, and a platform with no range is not shown.
+  A campaign whose `app_version` is missing or not in this form is rejected as `invalid`
 - **Typed events.** Event values keep their types, so `count gte 3` matches `3`, and a number sent as
   the string `"3"` is reported as `type_mismatch` instead of silently never matching
 - **A holdout for every campaign, measured on both sides.** The side comes from the person id

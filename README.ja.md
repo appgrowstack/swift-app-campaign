@@ -16,6 +16,7 @@
 - **型ごとの既定。** `trial_offer`・`review_ask`（OSの評価のダイアログだけ。前に何も挟まない）・`whats_new`・`cross_promo` は、既定のプレースメントと動きを持っています（`CampaignTemplate`）
 - **理由付きの純粋な判定。** `CampaignRules.decide` は時計・保存先・通信を読まず、出すキャンペーンか、キャンペーンごとの出さない理由を返します。順番は、古い組・使えない・期間外・きっかけ無し・回数・端末の条件・サーバーの条件・holdout・優先・文と画像です
 - **待った後にもう一度見る。** ほかの全画面が出ている間は待ち、その後に組と回数を読み直します。待っている間に止めた・一時停止した・期間が終わったキャンペーンは出しません
+- **バージョンはビルドの中身から決まる。** キャンペーンの `app_version` は手で書きません。サーバーがキャンペーンに要る機能から、OSごとの一番小さいバージョン `min` と除くバージョン `exclude` を出します（`{ "ios": { "min": "3.3.0", "exclude": ["3.4.0"] } }`）。端末は自分のバージョンがその範囲に入るかだけを見ます。範囲の無いOSには出しません。`app_version` が無い・この形でないキャンペーンは `invalid` で飛ばします
 - **出来事は型のまま。** 出来事の値は型を落とさずに受けるので、`count gte 3` は `3` に当たります。数を文字列の `"3"` で渡すと、当たらないまま気づけない状態にせず `type_mismatch` を記録します
 - **どのキャンペーンにもholdoutを置き、両方の側で数える。** 側は人のid（`hash32("<project>:<person>:<id>:holdout")`）で決まり、一度決まったら変わりません。どちらの側も `campaign_eligible(side)` を記録するので、2つの集まりを比べられます。記録にはその側を選んだ確率（`propensity`）と組のversion（`policy_version`）が付きます。組のpolicyの`global_holdout`が`true`のとき、`hash32("<project>:<person>:global_holdout") / 2³² < 0.05`の人にはどのキャンペーンも出さず（結果は`global_holdout`）、`campaign_eligible`も記録しません。自分の端末は入りません
 - **キャンペーンに案を2つ。** キャンペーンには `variants`（`id`・`values`・任意の `text_key`）を2つ書けます。案の値はキャンペーンの値に重ね、`show` と同じ決まりで読みます。出す側の人の案は `hash32("<project>:<person>:<id>:variant")` と組の `allocations` の重みで決まります（配分が無ければ等しい重み、重み0は止めた案）。自分の端末は止めていない最初の案です。`campaign_eligible`・`campaign_shown`・`campaign_tapped`・`campaign_dismissed`・`campaign_action_completed` に `variant` が付き、`propensity` と `policy_version` は案の確率と配分の版になります
