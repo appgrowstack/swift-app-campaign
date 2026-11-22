@@ -65,6 +65,14 @@ struct CampaignLimits: Sendable, Equatable {
     let afterDismissDays: Double
     /// `nil`: never again after the action completed.
     let afterActionDays: Double?
+    /// Not shown after any of these was heard earlier in this launch (`not_after_in_launch`).
+    let notAfterInLaunch: [CampaignLaunchEvent]
+}
+
+/// The shape of an event heard earlier in this launch: the name, and `where` on its props.
+struct CampaignLaunchEvent: Sendable, Equatable {
+    let event: String
+    let condition: CampaignCondition?
 }
 
 enum CampaignTap: Sendable, Equatable {

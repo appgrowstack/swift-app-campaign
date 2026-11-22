@@ -112,7 +112,7 @@ public enum CampaignSetLoader {
         let endsAt = try timestamp(object, "ends_at")
         let triggers = try triggersOf(object["triggers"], registry: registry)
         let audience = try audienceOf(object["audience"], registry: registry)
-        let limits = try limitsOf(object["limits"])
+        let limits = try limitsOf(object["limits"], registry: registry)
         let (placement, values, textKey) = try showOf(object["show"], registry: registry)
         let onTap = try onTapOf(object["on_tap"], registry: registry, targets: targets)
 
@@ -160,7 +160,7 @@ public enum CampaignSetLoader {
         return try CampaignCondition.parse(json, subject: .fact, registry: registry)
     }
 
-    private static func limitsOf(_ json: JSONValue?) throws(CampaignRejection) -> CampaignLimits {
+    private static func limitsOf(_ json: JSONValue?, registry: CampaignRegistry) throws(CampaignRejection) -> CampaignLimits {
         guard let object = json?.object,
               let maxShown = object["max_shown"]?.int, (1...20).contains(maxShown),
               let between = object["min_hours_between"]?.number, between >= 0,
@@ -176,7 +176,24 @@ public enum CampaignSetLoader {
             guard let days = action.number, days >= 0 else { throw .invalid }
             afterAction = days
         }
-        return CampaignLimits(maxShown: maxShown, maxPerAppVersion: perVersion, minHoursBetween: between, afterDismissDays: dismiss, afterActionDays: afterAction)
+        let notAfter = try launchEventsOf(object["not_after_in_launch"], registry: registry)
+        return CampaignLimits(maxShown: maxShown, maxPerAppVersion: perVersion, minHoursBetween: between, afterDismissDays: dismiss,
+                              afterActionDays: afterAction, notAfterInLaunch: notAfter)
+    }
+
+    /// `limits.not_after_in_launch`: none when left out. Each has the trigger's `event` and `where`.
+    private static func launchEventsOf(_ json: JSONValue?, registry: CampaignRegistry) throws(CampaignRejection) -> [CampaignLaunchEvent] {
+        guard let json else { return [] }
+        guard let items = json.array, items.count <= 20 else { throw .invalid }
+        var events: [CampaignLaunchEvent] = []
+        for item in items {
+            guard let object = item.object, let event = object["event"]?.string, !event.isEmpty,
+                  let whereValue = object["where"] else { throw .invalid }
+            let condition = whereValue.isNull
+                ? nil : try CampaignCondition.parse(whereValue, subject: .prop, registry: registry)
+            events.append(CampaignLaunchEvent(event: event, condition: condition))
+        }
+        return events
     }
 
     private static func showOf(_ json: JSONValue?, registry: CampaignRegistry)
