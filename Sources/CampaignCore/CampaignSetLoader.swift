@@ -41,7 +41,27 @@ public enum CampaignSetLoader {
         }
         return .loaded(CampaignSet(project: project, version: version, policy: policy(root["policy"]),
                                    targets: targets, campaigns: campaigns,
-                                   allocations: allocationsOf(root["allocations"], campaigns: campaigns)), rejections: rejections)
+                                   allocations: allocationsOf(root["allocations"], campaigns: campaigns),
+                                   releases: releasesOf(root["releases"])), rejections: rejections)
+    }
+
+    /// The set's `releases`: platform → rows of `version`, `released_at` (epoch ms) and `halted`. A row
+    /// that cannot be read is left out; the set is still used (only `version_age_days` is then unavailable).
+    private static func releasesOf(_ json: JSONValue?) -> [String: [CampaignRelease]] {
+        guard let object = json?.object else { return [:] }
+        var releases: [String: [CampaignRelease]] = [:]
+        for (platform, value) in object {
+            guard let items = value.array else { continue }
+            releases[platform] = items.compactMap { item in
+                guard let row = item.object,
+                      let version = row["version"]?.string.flatMap(CampaignVersion.init(appVersion:)),
+                      let releasedAt = row["released_at"]?.int,
+                      let halted = row["halted"]?.bool else { return nil }
+                return CampaignRelease(version: version, releasedAt: Date(timeIntervalSince1970: Double(releasedAt) / 1000),
+                                       halted: halted)
+            }
+        }
+        return releases
     }
 
     /// The set's `allocations`: kept only for a campaign with variants, with one integer weight

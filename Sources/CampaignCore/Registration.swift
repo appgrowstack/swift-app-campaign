@@ -213,6 +213,7 @@ public struct CampaignRegistry: Sendable, Equatable {
         "region": .init(type: .string, source: .device),
         "days_since_first_seen": .init(type: .int, source: .device),
         "session_seconds": .init(type: .int, source: .device),
+        "version_age_days": .init(type: .int, source: .device),
     ]
 
     func fact(_ name: String) -> FactSpec? { facts[name] ?? Self.sdkFacts[name] }

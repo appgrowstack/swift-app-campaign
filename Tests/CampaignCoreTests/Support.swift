@@ -78,8 +78,8 @@ enum Fixture {
     static func whatsNew() -> [String: Any] {
         campaign([
             "id": "whats-new-3-3-0", "type": "whats_new", "holdout": 0, "audience": NSNull(),
-            "triggers": [["id": "updated", "event": "app_updated",
-                          "where": ["prop": "to_version", "eq": "3.3.0"], "wait_seconds": 30]],
+            "requires": ["feature:auto_check"],
+            "triggers": [["id": "updated", "event": "app_updated", "where": NSNull(), "wait_seconds": 30]],
             "limits": ["max_shown": 1, "min_hours_between": 0, "after_dismiss_days": 0, "after_action_days": NSNull()],
             "show": ["placement": "whats_new", "values": [
                 "headline": ["ja": "押さなくても、達成に"], "body": ["ja": "自動で達成になります。"],

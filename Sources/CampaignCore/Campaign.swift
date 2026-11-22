@@ -144,6 +144,16 @@ public struct CampaignSet: Sendable, Equatable {
     public let campaigns: [Campaign]
     /// Campaign id → its allocation. Only readable ones; a campaign with variants and no entry splits evenly.
     public let allocations: [String: CampaignAllocation]
+    /// Platform → the released versions and when each was released (the set's `releases`, newest first,
+    /// up to 20). Rows that cannot be read are left out. `version_age_days` reads this.
+    public let releases: [String: [CampaignRelease]]
+}
+
+/// One released version in a set's `releases`. `halted` is a staged rollout that was stopped.
+public struct CampaignRelease: Sendable, Equatable {
+    public let version: CampaignVersion
+    public let releasedAt: Date
+    public let halted: Bool
 }
 
 enum CampaignTime {

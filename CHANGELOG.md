@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- The SDK value `version_age_days`: whole days since the running version was released, read from the
+  set's top-level `releases` (per platform, `version`, `released_at`, `halted`). Unavailable when the
+  version is not in `releases` or its rollout was halted, so a condition on it does not pass.
+  Rows of `releases` that cannot be read are skipped; the set is still used. `CampaignSet.releases`, `CampaignRelease` and `CampaignRules.versionAgeDays(_:platform:appVersion:now:)`.
+
+### Changed
+
+- **Breaking:** an `app_updated` trigger matches only when the event's `from_version` is older than
+  the `min` of the campaign's `app_version` range for the platform. A person who already had what a
+  `whats_new` campaign announces is not shown it; one who skipped versions is. No `from_version`, or
+  one that cannot be read, does not match.
+
 ## [0.6.0] - 2026-11-23
 
 ### Changed

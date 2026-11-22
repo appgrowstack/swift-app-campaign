@@ -215,6 +215,9 @@ public enum CampaignRules {
                 if let condition = trigger.condition {
                     guard await props.evaluate(condition, phase: .full) == Evaluator.Match.yes else { continue }
                 }
+                // `app_updated` matches only when the version before the update is older than the range's
+                // `min`: a person who already had what the campaign announces is not shown it.
+                if trigger.event == appUpdated, !updatedAcross(campaign, input) { continue }
                 matched = trigger
                 break
             }
@@ -348,6 +351,27 @@ public enum CampaignRules {
         return lhs.id < rhs.id
     }
 
+    static let appUpdated = "app_updated"
+
+    /// `from_version` of the `app_updated` event is older than the `min` of the campaign's range for this
+    /// platform. No `from_version`, or one that cannot be read, does not match.
+    static func updatedAcross(_ campaign: Campaign, _ input: CampaignDecisionInput) -> Bool {
+        guard let range = campaign.appVersion[input.context.platform],
+              case .string(let text)? = input.event.props["from_version"],
+              let from = CampaignVersion(text) else { return false }
+        return from < range.min
+    }
+
+    /// Days since the running version was released (`version_age_days`): whole days from its
+    /// `released_at` in the set's `releases` for this platform. `nil` when the version is not there or
+    /// its rollout was halted.
+    public static func versionAgeDays(_ set: CampaignSet, platform: String, appVersion: String, now: Date) -> Int? {
+        guard let version = CampaignVersion(appVersion),
+              let release = set.releases[platform]?.first(where: { $0.version == version }),
+              !release.halted else { return nil }
+        return max(0, Int((now.timeIntervalSince(release.releasedAt) / 86400).rounded(.down)))
+    }
+
     private static func inactive(_ campaign: Campaign, _ input: CampaignDecisionInput) -> CampaignOutcome.Inactive? {
         let context = input.context
         guard campaign.status == "active" else { return .status }
@@ -465,8 +489,9 @@ private actor FactReader {
     func lookup(_ name: String) async -> CampaignLookup {
         if let cached = cache[name] { return cached }
         let lookup: CampaignLookup
-        if let sdk = sdkFact(name) {
-            lookup = .value(sdk)
+        if CampaignRegistry.sdkFacts[name] != nil {
+            // An SDK value the SDK cannot tell now (`version_age_days` of a version not in the set) is unavailable.
+            lookup = sdkFact(name).map(CampaignLookup.value) ?? .unavailable
         } else {
             if source(of: name) == .server { serverRead.append(name) }
             lookup = await read(name).map(CampaignLookup.value) ?? .unavailable
@@ -486,6 +511,9 @@ private actor FactReader {
         case "region": return .string(context.region)
         case "days_since_first_seen": return .int(input.daysSinceFirstSeen)
         case "session_seconds": return .int(input.sessionSeconds)
+        case "version_age_days":
+            return CampaignRules.versionAgeDays(input.set, platform: context.platform, appVersion: context.appVersion, now: input.now)
+                .map(CampaignValue.int)
         default: return nil
         }
     }
