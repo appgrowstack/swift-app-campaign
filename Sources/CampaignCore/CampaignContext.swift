@@ -125,8 +125,13 @@ public struct CampaignEvent: Sendable, Equatable {
         .init(name: "campaign_skipped", parameters: ["campaign": .string(campaign), "set_version": .int(version), "trigger": .string(trigger), "reason": .string(reason.rawValue)])
     }
 
-    static func eligible(_ campaign: String, version: Int, trigger: String, side: CampaignSide) -> Self {
-        .init(name: "campaign_eligible", parameters: ["campaign": .string(campaign), "set_version": .int(version), "trigger": .string(trigger), "side": .string(side.rawValue)])
+    /// `propensity` is the chance of the side; `policy_version` is the set's version (R10).
+    static func eligible(_ campaign: String, version: Int, trigger: String, side: CampaignSide, propensity: Double) -> Self {
+        .init(name: "campaign_eligible", parameters: [
+            "campaign": .string(campaign), "set_version": .int(version), "trigger": .string(trigger), "side": .string(side.rawValue),
+            "propensity": propensity == propensity.rounded() ? .int(Int(propensity)) : .double(propensity),
+            "policy_version": .int(version),
+        ])
     }
 
     static func stale(version: Int, hours: Int) -> Self {

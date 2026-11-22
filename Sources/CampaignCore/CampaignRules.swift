@@ -9,6 +9,8 @@ public enum CampaignOutcome: Sendable, Equatable, CustomStringConvertible {
     case limited(Limit)
     case audience
     case factUnavailable
+    /// The person is in the product-wide holdout (R10) and is shown no campaign.
+    case globalHoldout
     case heldOut
     case lowerPriority
     case missingLocale
@@ -40,6 +42,7 @@ public enum CampaignOutcome: Sendable, Equatable, CustomStringConvertible {
         case .limited(let what): "limited:\(what.rawValue)"
         case .audience: "audience"
         case .factUnavailable: "fact_unavailable"
+        case .globalHoldout: "global_holdout"
         case .heldOut: "held_out"
         case .lowerPriority: "lower_priority"
         case .missingLocale: "missing_locale"
@@ -183,6 +186,9 @@ public enum CampaignRules {
         }
 
         let reader = FactReader(input: input, read: facts)
+        // The product-wide holdout (R10), when the set applies it. The owner's device is always shown.
+        let inGlobalHoldout = set.policy.globalHoldout && !input.internalDevice
+            && CampaignHash.globalUnit(project: set.project, person: input.person) < CampaignHash.globalHoldout
         var candidates: [(Campaign, CampaignTrigger)] = []
 
         for campaign in set.campaigns {
@@ -227,9 +233,18 @@ public enum CampaignRules {
                     continue
                 }
             }
-            // 8. Holdout. Both sides are recorded as eligible.
+            // 8. The product-wide holdout first: not shown and not recorded as eligible, so the
+            // campaign's own counts and SRM stay clean.
+            if inGlobalHoldout {
+                decision.outcomes[campaign.id] = .globalHoldout
+                continue
+            }
+            // 8. Holdout. Both sides are recorded as eligible, with the chance of that side.
             let side = side(of: campaign, input)
-            decision.records.append(.eligible(campaign.id, version: version, trigger: trigger.id, side: side))
+            let propensity: Double = input.internalDevice ? (side == .treatment ? 1 : 0)
+                : (side == .holdout ? campaign.holdout : 1 - campaign.holdout)
+            decision.records.append(.eligible(campaign.id, version: version, trigger: trigger.id, side: side,
+                                              propensity: CampaignHash.round6(propensity)))
             decision.eligible.append(.init(campaign: campaign.id, trigger: trigger.id, side: side))
             if side == .holdout {
                 decision.outcomes[campaign.id] = .heldOut

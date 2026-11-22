@@ -77,11 +77,14 @@ public struct CampaignPolicy: Sendable, Equatable {
     public var maxPerSession: Int
     public var maxPerDay: Int
     public var cacheHours: Double
+    /// Applies the product-wide holdout (R10): a person in it is shown no campaign at all.
+    public var globalHoldout: Bool
 
-    public init(maxPerSession: Int = 1, maxPerDay: Int = 1, cacheHours: Double = 72) {
+    public init(maxPerSession: Int = 1, maxPerDay: Int = 1, cacheHours: Double = 72, globalHoldout: Bool = false) {
         self.maxPerSession = maxPerSession
         self.maxPerDay = maxPerDay
         self.cacheHours = cacheHours
+        self.globalHoldout = globalHoldout
     }
 }
 

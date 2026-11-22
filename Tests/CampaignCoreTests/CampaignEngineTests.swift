@@ -18,7 +18,8 @@ struct CampaignEngineTests {
         let shown = try #require(harness.recorder.events(named: "campaign_shown").first)
         #expect(shown.parameters == ["campaign": .string(Fixture.id), "set_version": .int(1), "trigger": "after_paywall", "placement": "trial_offer"])
         #expect(harness.recorder.events(named: "campaign_eligible").map(\.stringParameters) == [
-            ["campaign": Fixture.id, "set_version": "1", "trigger": "after_paywall", "side": "treatment"],
+            ["campaign": Fixture.id, "set_version": "1", "trigger": "after_paywall", "side": "treatment",
+             "propensity": "0.8", "policy_version": "1"],
         ])
         #expect(harness.serverAsks.value == 1)
     }

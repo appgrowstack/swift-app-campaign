@@ -27,7 +27,11 @@ that triggers it, who it is for, how often, and who is held out for comparison.
   the string `"3"` is reported as `type_mismatch` instead of silently never matching
 - **A holdout for every campaign, measured on both sides.** The side comes from the person id
   (`hash32("<project>:<person>:<id>:holdout")`) and never changes once decided. Both sides record
-  `campaign_eligible(side)`, so the two groups are comparable
+  `campaign_eligible(side)`, so the two groups are comparable, with the
+  chance of that side (`propensity`) and the set's version (`policy_version`). When the set's policy
+  has `global_holdout: true`, a person with `hash32("<project>:<person>:global_holdout") / 2³² < 0.05`
+  is shown no campaign (outcome `global_holdout`) and records no `campaign_eligible`. Your own devices
+  are never in it
 - **Fails closed.** A launch waits for its first fetch before deciding; offline, the set on hand is
   used within `cache_hours` (72 by default), then nothing is shown. An unreadable set keeps the
   previous one. An unknown placement, action, fact, operator, target or a wrong type skips that

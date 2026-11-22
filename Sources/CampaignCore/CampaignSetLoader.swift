@@ -69,7 +69,8 @@ public enum CampaignSetLoader {
         return CampaignPolicy(
             maxPerSession: object["max_per_session"]?.int.flatMap { $0 >= 1 ? $0 : nil } ?? defaults.maxPerSession,
             maxPerDay: object["max_per_day"]?.int.flatMap { $0 >= 1 ? $0 : nil } ?? defaults.maxPerDay,
-            cacheHours: object["cache_hours"]?.number.flatMap { $0 > 0 ? $0 : nil } ?? defaults.cacheHours
+            cacheHours: object["cache_hours"]?.number.flatMap { $0 > 0 ? $0 : nil } ?? defaults.cacheHours,
+            globalHoldout: object["global_holdout"]?.bool ?? false
         )
     }
 

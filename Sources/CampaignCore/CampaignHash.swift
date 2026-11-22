@@ -20,6 +20,19 @@ public enum CampaignHash {
         Double(hash32("\(project):\(person):\(campaign):holdout")) / 4_294_967_296
     }
 
+    /// The share of people in the product-wide holdout (R10).
+    public static let globalHoldout = 0.05
+
+    /// `hash32("<project>:<person>:global_holdout") / 2^32`, in `[0, 1)`.
+    public static func globalUnit(project: String, person: String) -> Double {
+        Double(hash32("\(project):\(person):global_holdout")) / 4_294_967_296
+    }
+
+    /// Rounds to 6 decimal places, the precision the shared cases and the server compare.
+    static func round6(_ value: Double) -> Double {
+        (value * 1_000_000).rounded() / 1_000_000
+    }
+
     /// `holdout` when `unit < holdout`. An internal device is always `treatment`.
     public static func side(project: String, person: String, campaign: String, holdout: Double,
                             internalDevice: Bool) -> CampaignSide {
