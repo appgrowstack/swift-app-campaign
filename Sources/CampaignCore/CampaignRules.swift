@@ -138,12 +138,17 @@ public struct CampaignDecision: Sendable {
         public let trigger: String
         public let waitSeconds: Int
         public let values: [String: CampaignResolvedValue]
+        /// The variant's id (R10 P5), or `nil` for a campaign without variants. Sent as `variant` on
+        /// `campaign_shown`, `campaign_tapped`, `campaign_dismissed` and `campaign_action_completed`.
+        public let variant: String?
     }
 
     public struct Eligible: Sendable, Equatable {
         public let campaign: String
         public let trigger: String
         public let side: CampaignSide
+        /// The variant chosen on the shown side; `nil` for a campaign without variants and for the holdout side.
+        public let variant: String?
     }
 
     /// The campaign to show, or `nil`.
@@ -189,7 +194,7 @@ public enum CampaignRules {
         // The product-wide holdout (R10), when the set applies it. The owner's device is always shown.
         let inGlobalHoldout = set.policy.globalHoldout && !input.internalDevice
             && CampaignHash.globalUnit(project: set.project, person: input.person) < CampaignHash.globalHoldout
-        var candidates: [(Campaign, CampaignTrigger)] = []
+        var candidates: [(Campaign, CampaignTrigger, CampaignVariant?)] = []
 
         for campaign in set.campaigns {
             // 3. Active for this build, now.
@@ -239,33 +244,48 @@ public enum CampaignRules {
                 decision.outcomes[campaign.id] = .globalHoldout
                 continue
             }
-            // 8. Holdout. Both sides are recorded as eligible, with the chance of that side.
+            // 8. Holdout. Both sides are recorded as eligible, with the chance of that side. On the shown
+            // side of a campaign with variants, the variant is chosen too and the chance is the variant's;
+            // `policy_version` is then the allocation's.
             let side = side(of: campaign, input)
-            let propensity: Double = input.internalDevice ? (side == .treatment ? 1 : 0)
+            let allocation = allocation(of: campaign, in: set)
+            var variant: CampaignVariant?
+            var propensity: Double = input.internalDevice ? (side == .treatment ? 1 : 0)
                 : (side == .holdout ? campaign.holdout : 1 - campaign.holdout)
+            if side == .treatment, let allocation, let variants = campaign.variants {
+                let index = CampaignHash.variantIndex(project: set.project, person: input.person, campaign: campaign.id,
+                                                      weights: allocation.weights, internalDevice: input.internalDevice)
+                variant = variants[index]
+                if !input.internalDevice {
+                    let total = allocation.weights.reduce(0, +)
+                    propensity = (1 - campaign.holdout) * Double(allocation.weights[index]) / Double(total)
+                }
+            }
             decision.records.append(.eligible(campaign.id, version: version, trigger: trigger.id, side: side,
-                                              propensity: CampaignHash.round6(propensity)))
-            decision.eligible.append(.init(campaign: campaign.id, trigger: trigger.id, side: side))
+                                              variant: variant?.id, propensity: CampaignHash.round6(propensity),
+                                              policyVersion: allocation?.policyVersion ?? version))
+            decision.eligible.append(.init(campaign: campaign.id, trigger: trigger.id, side: side, variant: variant?.id))
             if side == .holdout {
                 decision.outcomes[campaign.id] = .heldOut
                 continue
             }
-            candidates.append((campaign, trigger))
+            candidates.append((campaign, trigger, variant))
         }
         decision.serverFactsRead = await reader.serverRead
 
         // 9. Priority.
         candidates.sort { ranksBefore($0.0, $1.0) }
-        guard let (winner, trigger) = candidates.first else { return decision }
-        for (loser, loserTrigger) in candidates.dropFirst() {
+        guard let (winner, trigger, variant) = candidates.first else { return decision }
+        for (loser, loserTrigger, _) in candidates.dropFirst() {
             decision.outcomes[loser.id] = .lowerPriority
             decision.records.append(.skipped(loser.id, version: version, trigger: loserTrigger.id, reason: .lowerPriority))
         }
-        // 10. Text and images.
-        switch resolveValues(winner, input) {
+        // 10. Text and images (the chosen variant's values over the campaign's).
+        switch resolveValues(winner, input, variant: variant) {
         case .success(let values):
             decision.outcomes[winner.id] = .show
-            decision.shown = .init(campaign: winner, trigger: trigger.id, waitSeconds: trigger.waitSeconds, values: values)
+            decision.shown = .init(campaign: winner, trigger: trigger.id, waitSeconds: trigger.waitSeconds, values: values,
+                                   variant: variant?.id)
         case .failure(let reason):
             decision.outcomes[winner.id] = CampaignOutcome(reason)
             decision.records.append(.skipped(winner.id, version: version, trigger: trigger.id, reason: reason))
@@ -284,10 +304,13 @@ public enum CampaignRules {
         }
         if let inactive = inactive(campaign, input) { return .init(outcome: .inactive(inactive), shown: nil, records: []) }
         if let limit = limit(campaign, input) { return .init(outcome: .limited(limit), shown: nil, records: []) }
-        switch resolveValues(campaign, input) {
+        // The variant chosen before waiting stays; it is looked up in the set as it is now.
+        let variant = campaign.variants?.first { $0.id == selection.variant }
+        switch resolveValues(campaign, input, variant: variant) {
         case .success(let values):
             let wait = campaign.triggers.first { $0.id == selection.trigger }?.waitSeconds ?? selection.waitSeconds
-            return .init(outcome: .show, shown: .init(campaign: campaign, trigger: selection.trigger, waitSeconds: wait, values: values), records: [])
+            return .init(outcome: .show, shown: .init(campaign: campaign, trigger: selection.trigger, waitSeconds: wait, values: values,
+                                                      variant: variant?.id), records: [])
         case .failure(let reason):
             return .init(outcome: CampaignOutcome(reason), shown: nil,
                          records: [.skipped(id, version: version, trigger: selection.trigger, reason: reason)])
@@ -301,6 +324,13 @@ public enum CampaignRules {
         if let side = input.sides[campaign.id] { return side }
         return CampaignHash.side(project: input.set.project, person: input.person, campaign: campaign.id,
                                  holdout: campaign.holdout, internalDevice: false)
+    }
+
+    /// The campaign's allocation: the set's entry, else equal weights with the set's version. `nil`
+    /// for a campaign without variants.
+    static func allocation(of campaign: Campaign, in set: CampaignSet) -> CampaignAllocation? {
+        guard let variants = campaign.variants else { return nil }
+        return set.allocations[campaign.id] ?? CampaignAllocation(weights: variants.map { _ in 1 }, policyVersion: set.version)
     }
 
     /// `priority` high first, then the newer `starts_at` (none counts as oldest), then the id.
@@ -345,16 +375,19 @@ public enum CampaignRules {
         return nil
     }
 
-    static func resolveValues(_ campaign: Campaign, _ input: CampaignDecisionInput)
+    /// With a variant, its values are laid over the campaign's and its `text_key` (when set) is used.
+    static func resolveValues(_ campaign: Campaign, _ input: CampaignDecisionInput, variant: CampaignVariant? = nil)
         -> Result<[String: CampaignResolvedValue], CampaignSkipReason> {
         guard let placement = input.registry.placements[campaign.placement] else { return .failure(.missingLocale) }
+        let values = variant.map { campaign.values.merging($0.values) { $1 } } ?? campaign.values
+        let textKey = variant?.textKey ?? campaign.textKey
         var resolved: [String: CampaignResolvedValue] = [:]
         for (name, field) in placement.fields {
-            let raw = campaign.values[name]
+            let raw = values[name]
             switch field.type {
             case .text:
                 if let text = pickText(raw?.object, lang: input.context.lang)
-                    ?? campaign.textKey.flatMap({ input.texts("\($0).\(name)") }) {
+                    ?? textKey.flatMap({ input.texts("\($0).\(name)") }) {
                     resolved[name] = .text(text)
                 } else if field.required {
                     return .failure(.missingLocale)

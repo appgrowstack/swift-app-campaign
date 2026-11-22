@@ -263,7 +263,7 @@ public final class CampaignEngine: CampaignEventObserving {
         // After the paywall was closed, a survey is not the next thing in this launch.
         let set = paywallClosedThisLaunch
             ? CampaignSet(project: set.project, version: set.version, policy: set.policy, targets: set.targets,
-                          campaigns: set.campaigns.filter { $0.type != .survey })
+                          campaigns: set.campaigns.filter { $0.type != .survey }, allocations: set.allocations)
             : set
         return CampaignDecisionInput(
             set: set, registry: registry, fetchedAt: state.fetchedAt ?? .distantPast, now: now, context: context,
@@ -327,7 +327,7 @@ public final class CampaignEngine: CampaignEventObserving {
         let kind = registry.placements[campaign.placement]?.kind ?? .modal
         let presentation = CampaignPresentation(
             id: UUID(), campaign: campaign.id, setVersion: setVersion, trigger: selection.trigger,
-            placement: campaign.placement, values: selection.values, event: event, onTap: campaign.onTap
+            placement: campaign.placement, variant: selection.variant, values: selection.values, event: event, onTap: campaign.onTap
         )
         guard var state else { return }
         if let decodes = decoders[campaign.placement], !decodes(presentation) {
@@ -342,10 +342,9 @@ public final class CampaignEngine: CampaignEventObserving {
         sessionShown += 1
         state.history.campaigns[campaign.id, default: CampaignRecord()].count(at: now, appVersion: context.appVersion)
         state.history.shownAt = state.history.shownAt.filter { now.timeIntervalSince($0) < 2 * 86400 } + [now]
-        record(.init(name: "campaign_shown", parameters: [
-            "campaign": .string(campaign.id), "set_version": .int(setVersion),
-            "trigger": .string(selection.trigger), "placement": .string(campaign.placement),
-        ]))
+        record(.init(name: "campaign_shown", parameters: Self.parameters(of: presentation).merging([
+            "placement": .string(campaign.placement),
+        ]) { $1 }))
         self.state = state
         await storage.saveState(state)
         if kind == .system { await complete(presentation, tapped: false) }
@@ -362,10 +361,7 @@ public final class CampaignEngine: CampaignEventObserving {
 
     /// Runs the campaign's `on_tap`: after a tap, or at once for a `system` placement (no `campaign_tapped`).
     private func complete(_ presentation: CampaignPresentation, tapped: Bool) async {
-        let base: [String: CampaignValue] = [
-            "campaign": .string(presentation.campaign), "set_version": .int(presentation.setVersion),
-            "trigger": .string(presentation.trigger),
-        ]
+        let base = Self.parameters(of: presentation)
         let actionName: String
         let result: CampaignActionResult
         var target: CampaignTarget?
@@ -416,6 +412,18 @@ public final class CampaignEngine: CampaignEventObserving {
         await complete(presentation, tapped: true)
     }
 
+    /// `campaign`, `set_version` and `trigger` of a presentation, with `variant` when the campaign has
+    /// variants (R10 P5). Shared by `campaign_shown`, `campaign_tapped`, `campaign_dismissed` and
+    /// `campaign_action_completed`.
+    nonisolated static func parameters(of presentation: CampaignPresentation) -> [String: CampaignValue] {
+        var parameters: [String: CampaignValue] = [
+            "campaign": .string(presentation.campaign), "set_version": .int(presentation.setVersion),
+            "trigger": .string(presentation.trigger),
+        ]
+        if let variant = presentation.variant { parameters["variant"] = .string(variant) }
+        return parameters
+    }
+
     /// Whether `choice` is one of the campaign's answers.
     nonisolated static func isChoice(_ choice: String, of values: [String: CampaignResolvedValue]) -> Bool {
         if case .int(let scale)? = values["scale"] {
@@ -430,10 +438,9 @@ public final class CampaignEngine: CampaignEventObserving {
     public func dismiss(_ presentation: CampaignPresentation, via: CampaignDismissal) async {
         guard presenting?.id == presentation.id else { return }
         presenting = nil
-        record(.init(name: "campaign_dismissed", parameters: [
-            "campaign": .string(presentation.campaign), "set_version": .int(presentation.setVersion),
-            "trigger": .string(presentation.trigger), "via": .string(via.rawValue),
-        ]))
+        record(.init(name: "campaign_dismissed", parameters: Self.parameters(of: presentation).merging([
+            "via": .string(via.rawValue),
+        ]) { $1 }))
         guard var state else { return }
         state.history.campaigns[presentation.campaign, default: CampaignRecord()].dismissedAt = clock.now
         self.state = state
@@ -468,7 +475,7 @@ public final class CampaignEngine: CampaignEventObserving {
         guard case .success(let values) = CampaignRules.resolveValues(campaign, input) else { return false }
         let presentation = CampaignPresentation(
             id: UUID(), campaign: campaign.id, setVersion: set.version, trigger: "debug",
-            placement: campaign.placement, values: values, event: input.event, onTap: campaign.onTap
+            placement: campaign.placement, variant: nil, values: values, event: input.event, onTap: campaign.onTap
         )
         if registry.placements[campaign.placement]?.kind == .system {
             await complete(presentation, tapped: false)

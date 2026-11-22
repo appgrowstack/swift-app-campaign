@@ -32,6 +32,13 @@ that triggers it, who it is for, how often, and who is held out for comparison.
   has `global_holdout: true`, a person with `hash32("<project>:<person>:global_holdout") / 2³² < 0.05`
   is shown no campaign (outcome `global_holdout`) and records no `campaign_eligible`. Your own devices
   are never in it
+- **Two variants of a campaign.** A campaign may list two `variants` (`id`, `values`, optional
+  `text_key`); each variant's values are laid over the campaign's and checked like `show`. On the shown
+  side, the variant comes from `hash32("<project>:<person>:<id>:variant")` and the weights in the set's
+  `allocations` (equal weights when there is none; a weight of 0 is a stopped variant). Your own devices
+  get the first variant that is not stopped. `campaign_eligible`, `campaign_shown`, `campaign_tapped`,
+  `campaign_dismissed` and `campaign_action_completed` carry `variant`, and `propensity` and
+  `policy_version` are then the variant's and the allocation's
 - **Fails closed.** A launch waits for its first fetch before deciding; offline, the set on hand is
   used within `cache_hours` (72 by default), then nothing is shown. An unreadable set keeps the
   previous one. An unknown placement, action, fact, operator, target or a wrong type skips that

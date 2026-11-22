@@ -7,6 +7,8 @@ public struct CampaignPresentation: Sendable, Identifiable, Equatable {
     public let setVersion: Int
     public let trigger: String
     public let placement: String
+    /// The campaign's variant being shown (R10 P5), or `nil` for a campaign without variants.
+    public let variant: String?
     /// Text already in the device's language.
     public let values: [String: CampaignResolvedValue]
     let event: CampaignObservedEvent

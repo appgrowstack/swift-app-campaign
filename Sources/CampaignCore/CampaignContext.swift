@@ -125,13 +125,18 @@ public struct CampaignEvent: Sendable, Equatable {
         .init(name: "campaign_skipped", parameters: ["campaign": .string(campaign), "set_version": .int(version), "trigger": .string(trigger), "reason": .string(reason.rawValue)])
     }
 
-    /// `propensity` is the chance of the side; `policy_version` is the set's version (R10).
-    static func eligible(_ campaign: String, version: Int, trigger: String, side: CampaignSide, propensity: Double) -> Self {
-        .init(name: "campaign_eligible", parameters: [
+    /// `propensity` is the chance of the side (of the variant, on the shown side of a campaign with
+    /// variants); `policy_version` is the set's version, or the allocation's for a campaign with
+    /// variants (R10). `variant` only on the shown side of a campaign with variants.
+    static func eligible(_ campaign: String, version: Int, trigger: String, side: CampaignSide, variant: String?,
+                         propensity: Double, policyVersion: Int) -> Self {
+        var parameters: [String: CampaignValue] = [
             "campaign": .string(campaign), "set_version": .int(version), "trigger": .string(trigger), "side": .string(side.rawValue),
             "propensity": propensity == propensity.rounded() ? .int(Int(propensity)) : .double(propensity),
-            "policy_version": .int(version),
-        ])
+            "policy_version": .int(policyVersion),
+        ]
+        if let variant { parameters["variant"] = .string(variant) }
+        return .init(name: "campaign_eligible", parameters: parameters)
     }
 
     static func stale(version: Int, hours: Int) -> Self {

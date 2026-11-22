@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Campaign variants (R10 P5): a campaign's optional `variants` (two, each `id`, `values`, optional
+  `text_key`) and the set's optional `allocations` (`weights`, `policy_version`). A variant whose values
+  do not fit the placement rejects the campaign; an unreadable allocation is ignored (equal weights).
+  On the shown side the variant is chosen with `hash32("<project>:<person>:<campaign>:variant")` and
+  the weights; the owner's device gets the first variant that is not stopped.
+  `CampaignDecision.Selection.variant`, `CampaignDecision.Eligible.variant`, `CampaignPresentation.variant`,
+  `CampaignSet.allocations` and `CampaignHash.variantIndex`.
+- `campaign_eligible`, `campaign_shown`, `campaign_tapped`, `campaign_dismissed` and
+  `campaign_action_completed` carry `variant` when the campaign has variants. `campaign_eligible`'s
+  `propensity` is then the chance of the variant and `policy_version` the allocation's.
+- Shared cases `variant-*` in the tests.
+
 ## [0.5.0] - 2026-11-22
 
 No change to the library. The version follows kotlin-app-campaign 0.5.0, which now keeps the holdout

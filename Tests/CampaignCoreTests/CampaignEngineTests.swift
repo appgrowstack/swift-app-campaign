@@ -24,6 +24,29 @@ struct CampaignEngineTests {
         #expect(harness.serverAsks.value == 1)
     }
 
+    @Test func shownVariantIsRecordedOnItsEvents() async throws {
+        // No allocation: the two variants split evenly, and user-6 lands on the second (warm).
+        let harness = Harness()
+        await harness.load(Fixture.set([Fixture.campaign(["variants": [
+            ["id": "plain", "values": [String: Any]()],
+            ["id": "warm", "values": ["headline": ["ja": "2日間、ぜんぶ使えます", "en": "Everything, free for 2 days"]]],
+        ]])]))
+        await harness.engine.receive(Fixture.paywallClosed)
+
+        let offer = try #require(harness.engine.offer(TrialOfferPlacement.self))
+        #expect(offer.values.headline == "2日間、ぜんぶ使えます")
+        #expect(offer.presentation.variant == "warm")
+        #expect(harness.recorder.events(named: "campaign_eligible").map(\.stringParameters) == [
+            ["campaign": Fixture.id, "set_version": "1", "trigger": "after_paywall", "side": "treatment",
+             "variant": "warm", "propensity": "0.4", "policy_version": "1"],
+        ])
+        let shown = try #require(harness.recorder.events(named: "campaign_shown").first)
+        #expect(shown.parameters == ["campaign": .string(Fixture.id), "set_version": .int(1), "trigger": "after_paywall",
+                                     "placement": "trial_offer", "variant": "warm"])
+        await harness.dismissShown()
+        #expect(harness.recorder.events(named: "campaign_dismissed").first?.parameters["variant"] == .string("warm"))
+    }
+
     @Test func ignoresItsOwnEventsAndEventsBeforeASet() async {
         let harness = Harness()
         await harness.engine.receive(Fixture.paywallClosed)

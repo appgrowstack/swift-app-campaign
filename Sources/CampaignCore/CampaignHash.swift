@@ -20,6 +20,27 @@ public enum CampaignHash {
         Double(hash32("\(project):\(person):\(campaign):holdout")) / 4_294_967_296
     }
 
+    /// The variant of a campaign with variants (R10 P5), for a person on the shown side: the first
+    /// index `i` with `weights[i] > 0` and `h × Σweights < Σweights[0...i] × 2^32`, where
+    /// `h = hash32("<project>:<person>:<campaign>:variant")`. An internal device gets the first
+    /// variant whose weight is above 0.
+    public static func variantIndex(project: String, person: String, campaign: String, weights: [Int],
+                                    internalDevice: Bool) -> Int {
+        if internalDevice { return weights.firstIndex { $0 > 0 } ?? 0 }
+        return weightedIndex(hash32("\(project):\(person):\(campaign):variant"), weights: weights)
+    }
+
+    /// Integer math, so the server and both SDKs pick the same index. A weight of 0 is never picked.
+    static func weightedIndex(_ h: UInt32, weights: [Int]) -> Int {
+        let total = UInt64(weights.reduce(0, +))
+        var cumulative: UInt64 = 0
+        for (index, weight) in weights.enumerated() {
+            cumulative += UInt64(weight)
+            if weight > 0, UInt64(h) * total < cumulative << 32 { return index }
+        }
+        return weights.lastIndex { $0 > 0 } ?? 0
+    }
+
     /// The share of people in the product-wide holdout (R10).
     public static let globalHoldout = 0.05
 

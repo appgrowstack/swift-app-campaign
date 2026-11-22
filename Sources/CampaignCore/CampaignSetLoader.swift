@@ -40,7 +40,26 @@ public enum CampaignSetLoader {
             }
         }
         return .loaded(CampaignSet(project: project, version: version, policy: policy(root["policy"]),
-                                   targets: targets, campaigns: campaigns), rejections: rejections)
+                                   targets: targets, campaigns: campaigns,
+                                   allocations: allocationsOf(root["allocations"], campaigns: campaigns)), rejections: rejections)
+    }
+
+    /// The set's `allocations`: kept only for a campaign with variants, with one integer weight
+    /// 0…1000 per variant (at least one above 0) and a `policy_version` of 0 or more. An entry
+    /// that cannot be read is left out, so the campaign splits evenly.
+    private static func allocationsOf(_ json: JSONValue?, campaigns: [Campaign]) -> [String: CampaignAllocation] {
+        guard let object = json?.object else { return [:] }
+        var allocations: [String: CampaignAllocation] = [:]
+        for campaign in campaigns {
+            guard let variants = campaign.variants, let entry = object[campaign.id]?.object,
+                  let items = entry["weights"]?.array,
+                  let policyVersion = entry["policy_version"]?.int, policyVersion >= 0 else { continue }
+            let weights = items.compactMap(\.int)
+            guard weights.count == items.count, weights.count == variants.count,
+                  weights.allSatisfy({ (0...1000).contains($0) }), weights.contains(where: { $0 > 0 }) else { continue }
+            allocations[campaign.id] = CampaignAllocation(weights: weights, policyVersion: policyVersion)
+        }
+        return allocations
     }
 
     private static func rejectedID(_ item: JSONValue) -> String {
@@ -114,13 +133,14 @@ public enum CampaignSetLoader {
         let audience = try audienceOf(object["audience"], registry: registry)
         let limits = try limitsOf(object["limits"])
         let (placement, values, textKey) = try showOf(object["show"], registry: registry)
+        let variants = try variantsOf(object["variants"], placement: placement, values: values, textKey: textKey, registry: registry)
         let onTap = try onTapOf(object["on_tap"], registry: registry, targets: targets)
 
         return Campaign(
             id: id, type: type, title: title, priority: priority, placement: placement, status: status,
             platforms: platforms, appVersion: appVersion, channels: channels,
             startsAt: startsAt, endsAt: endsAt, triggers: triggers, audience: audience, limits: limits,
-            holdout: holdout, values: values, textKey: textKey, onTap: onTap
+            holdout: holdout, values: values, textKey: textKey, variants: variants, onTap: onTap
         )
     }
 
@@ -195,6 +215,34 @@ public enum CampaignSetLoader {
             try check(value, as: field.type, registry: registry)
         }
         return (name, values, textKey)
+    }
+
+    /// The campaign's two variants, or `nil` when it has none. Each variant's values are laid over
+    /// the campaign's and checked against the placement as `show` is.
+    private static func variantsOf(_ json: JSONValue?, placement: String, values: [String: JSONValue], textKey: String?,
+                                   registry: CampaignRegistry) throws(CampaignRejection) -> [CampaignVariant]? {
+        guard let json else { return nil }
+        guard let items = json.array, items.count == 2 else { throw .invalid }
+        var ids: Set<String> = []
+        var variants: [CampaignVariant] = []
+        for item in items {
+            guard let object = item.object, let id = object["id"]?.string, isName(id),
+                  id != "holdout", id != "treatment", !ids.contains(id),
+                  let own = object["values"]?.object else { throw .invalid }
+            var ownTextKey: String?
+            if let raw = object["text_key"] {
+                guard let text = raw.string else { throw .invalid }
+                ownTextKey = text
+            }
+            ids.insert(id)
+            var show: [String: JSONValue] = [
+                "placement": .string(placement), "values": .object(values.merging(own) { $1 }),
+            ]
+            if let key = ownTextKey ?? textKey { show["text_key"] = .string(key) }
+            _ = try showOf(.object(show), registry: registry)
+            variants.append(CampaignVariant(id: id, values: own, textKey: ownTextKey))
+        }
+        return variants
     }
 
     private static func check(_ value: JSONValue, as type: CampaignFieldType, registry: CampaignRegistry) throws(CampaignRejection) {

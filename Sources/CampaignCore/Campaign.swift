@@ -47,7 +47,26 @@ public struct Campaign: Sendable, Equatable {
     let holdout: Double
     let values: [String: JSONValue]
     let textKey: String?
+    /// The campaign's two variants (R10 P5), or `nil` when it has none. The shown values lay the
+    /// chosen variant's values over ``values``.
+    let variants: [CampaignVariant]?
     let onTap: CampaignTap
+}
+
+/// One of a campaign's variants (R10 P5). `values` are laid over the campaign's own values, and
+/// `textKey` (when set) replaces the campaign's.
+public struct CampaignVariant: Sendable, Equatable {
+    public let id: String
+    let values: [String: JSONValue]
+    let textKey: String?
+}
+
+/// How a campaign with variants splits the shown side between them (the set's `allocations`).
+/// `weights` follow the order of the variants; a weight of 0 is a stopped variant.
+public struct CampaignAllocation: Sendable, Equatable {
+    public let weights: [Int]
+    /// Sent as `policy_version` on `campaign_eligible`.
+    public let policyVersion: Int
 }
 
 struct CampaignTrigger: Sendable, Equatable {
@@ -114,6 +133,8 @@ public struct CampaignSet: Sendable, Equatable {
     public let policy: CampaignPolicy
     public let targets: [String: CampaignTarget]
     public let campaigns: [Campaign]
+    /// Campaign id → its allocation. Only readable ones; a campaign with variants and no entry splits evenly.
+    public let allocations: [String: CampaignAllocation]
 }
 
 enum CampaignTime {

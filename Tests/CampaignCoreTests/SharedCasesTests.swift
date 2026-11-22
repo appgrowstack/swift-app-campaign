@@ -27,6 +27,9 @@ struct SharedCasesTests {
 
         #expect(result.show.map(JSONValue.string) ?? .null == expect["show"], "show")
         #expect(result.trigger.map(JSONValue.string) ?? .null == expect["trigger"], "trigger")
+        if let variant = expect["variant"] {
+            #expect(result.variant.map(JSONValue.string) ?? .null == variant, "variant")
+        }
         if let values = expect["values"] {
             #expect(result.values == values, "values")
         }
@@ -77,6 +80,7 @@ struct SharedCasesTests {
     struct Result {
         var show: String?
         var trigger: String?
+        var variant: String?
         var values: JSONValue = .null
         var outcomes: [String: String] = [:]
         var records: [JSONValue] = []
@@ -177,6 +181,7 @@ struct SharedCasesTests {
 
         result.show = shown?.campaign.id
         result.trigger = shown?.trigger
+        result.variant = shown?.variant
         if let values = shown?.values {
             result.values = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(values))
         }
