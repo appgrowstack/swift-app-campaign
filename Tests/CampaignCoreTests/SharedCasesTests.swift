@@ -132,6 +132,7 @@ struct SharedCasesTests {
             sessionSeconds: context["session_seconds"]?.int ?? 0,
             history: history.history,
             sessionShown: history.sessionShown,
+            launchEvents: history.launchEvents,
             event: CampaignObservedEvent(
                 name: try need(eventJSON["name"]?.string),
                 props: try need(eventJSON["props"]?.object).compactMapValues(\.scalar)
@@ -167,6 +168,7 @@ struct SharedCasesTests {
                     let newer = try readHistory(need(raw.object))
                     later.history = newer.history
                     later.sessionShown = newer.sessionShown
+                    later.launchEvents = newer.launchEvents
                 }
                 let recheck = CampaignRules.recheck(selection, later)
                 result.outcomes[selection.campaign.id] = recheck.outcome.code
@@ -186,7 +188,8 @@ struct SharedCasesTests {
 
     struct Missing: Error {}
 
-    static func readHistory(_ json: [String: JSONValue]) throws -> (history: CampaignHistory, sessionShown: Int) {
+    static func readHistory(_ json: [String: JSONValue]) throws
+        -> (history: CampaignHistory, sessionShown: Int, launchEvents: [CampaignObservedEvent]) {
         let history = CampaignHistory(
             shownAt: try need(json["shown_at"]?.array).map { try date($0) },
             campaigns: try need(json["campaigns"]?.object).mapValues { value in
@@ -200,7 +203,12 @@ struct SharedCasesTests {
                 )
             }
         )
-        return (history, try need(json["session_shown"]?.int))
+        let launchEvents = try (json["launch_events"]?.array ?? []).map { item in
+            let object = try need(item.object)
+            return CampaignObservedEvent(name: try need(object["name"]?.string),
+                                         props: (object["props"]?.object ?? [:]).compactMapValues(\.scalar))
+        }
+        return (history, try need(json["session_shown"]?.int), launchEvents)
     }
 
     static func need<T>(_ value: T?) throws -> T {

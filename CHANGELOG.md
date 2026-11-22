@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `limits.not_after_in_launch`: a campaign is not shown after any of these events (name and `where`
+  on its props) was heard earlier in the same launch. The outcome is `limited:not_after_in_launch`.
+  The engine keeps only the events some campaign of the set looks at (`CampaignRules.remembersInLaunch`)
+  and hands them to the decision as `launchEvents`; after waiting, events heard meanwhile count too.
+
+### Changed
+
+- **Breaking:** the engine no longer leaves out `survey` campaigns by itself after `paywall_closed`.
+  A survey campaign writes `"not_after_in_launch": [{ "event": "paywall_closed", "where": null }]`
+  (the `survey` template's check requires it).
+
 ## [0.5.0] - 2026-11-22
 
 No change to the library. The version follows kotlin-app-campaign 0.5.0, which now keeps the holdout
